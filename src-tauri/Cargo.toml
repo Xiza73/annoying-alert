@@ -20,6 +20,30 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+
+# Serialization: serde is the de-facto standard. `derive` enables
+# #[derive(Serialize, Deserialize)] on our structs so Tauri can
+# automatically convert them to/from JSON across the IPC bridge.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# SQLite. `bundled` compiles SQLite from source and links it
+# statically into our binary — zero OS dependency, same behavior
+# on every Windows machine. Also enables chrono<->SQLite integration.
+rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
+
+# Timestamps. `serde` feature lets chrono types serialize to ISO 8601
+# strings automatically when they cross the IPC boundary.
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling. `thiserror` for defining our own error types
+# (library-style), `anyhow` for propagating errors upward with
+# context (application-style). Idiomatic Rust error story.
+thiserror = "1"
+anyhow = "1"
+
+# Logging. `log` is the facade (what our code calls); `env_logger`
+# is a simple sink that prints to stderr with RUST_LOG filtering.
+log = "0.4"
+env_logger = "0.11"
 
