@@ -19,6 +19,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
 
     /* Path alias para shadcn/ui y ergonomia de imports */
     "baseUrl": ".",
