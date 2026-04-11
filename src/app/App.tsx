@@ -10,7 +10,7 @@
  */
 
 import { listen } from "@tauri-apps/api/event";
-import { Plus, RefreshCcw, Settings, Trash2, X } from "lucide-react";
+import { BellRing, Plus, RefreshCcw, Settings, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ReminderFormSheet } from "@/features/reminders/components/ReminderFormSheet";
@@ -25,7 +25,9 @@ import type {
   Reminder,
 } from "@/features/reminders/types";
 import { SettingsSheet } from "@/features/settings/SettingsSheet";
+import { ConfirmDialog } from "@/shared/components/ConfirmDialog";
 import { Button } from "@/shared/components/ui/button";
+import { Toaster } from "@/shared/components/ui/sonner";
 import { cn } from "@/shared/lib/utils";
 
 /**
@@ -137,6 +139,8 @@ function App() {
       />
 
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+      <Toaster richColors position="bottom-right" />
     </main>
   );
 }
@@ -162,11 +166,12 @@ function Header({
     <header className="flex flex-col gap-4">
       <div
         className={cn(
-          "self-start rounded-xl border border-border bg-card px-4 py-1.5",
+          "flex items-center gap-2 self-start rounded-xl border border-border bg-card px-4 py-1.5",
           "font-mono text-[10px] tracking-[0.2em] uppercase text-muted-foreground",
         )}
       >
-        waqyay · fase 3
+        <BellRing className="size-3 text-primary" />
+        <span>waqyay</span>
       </div>
 
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -197,16 +202,24 @@ function Header({
           >
             <Settings className="size-4" />
           </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={onClearAll}
+          <ConfirmDialog
+            title="¿Borrar todos los recordatorios?"
+            description="Vas a eliminar TODOS los recordatorios de la base. Esta acción no se puede deshacer."
+            confirmLabel="Borrar todo"
+            destructive
             disabled={loading}
-            aria-label="Borrar todos"
-            className="text-muted-foreground hover:text-destructive"
+            onConfirm={onClearAll}
           >
-            <Trash2 className="size-4" />
-          </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              disabled={loading}
+              aria-label="Borrar todos"
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </ConfirmDialog>
         </div>
       </div>
     </header>

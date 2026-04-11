@@ -12,6 +12,7 @@
 import { Clock, Pencil, Repeat, Timer, Trash2 } from "lucide-react";
 
 import type { Reminder } from "@/features/reminders/types";
+import { ConfirmDialog } from "@/shared/components/ConfirmDialog";
 import { Button } from "@/shared/components/ui/button";
 import { Switch } from "@/shared/components/ui/switch";
 import { formatRelative } from "@/shared/lib/datetime";
@@ -93,16 +94,24 @@ export function ReminderCard({
         >
           <Pencil className="size-4" />
         </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={() => onDelete(reminder.id)}
+        <ConfirmDialog
+          title="¿Borrar recordatorio?"
+          description={`Vas a eliminar «${reminder.title}». Esta acción no se puede deshacer.`}
+          confirmLabel="Borrar"
+          destructive
           disabled={disabled}
-          aria-label="Eliminar"
-          className="text-muted-foreground hover:text-destructive"
+          onConfirm={() => onDelete(reminder.id)}
         >
-          <Trash2 className="size-4" />
-        </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            disabled={disabled}
+            aria-label="Eliminar"
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </ConfirmDialog>
       </div>
     </article>
   );

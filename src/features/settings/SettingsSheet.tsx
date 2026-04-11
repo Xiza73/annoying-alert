@@ -20,6 +20,7 @@ import {
 } from "@tauri-apps/plugin-autostart";
 import { Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import {
   cleanupUnusedSounds,
@@ -101,7 +102,6 @@ export function SettingsSheet({
   const [values, setValues] = useState<SettingsValues>(DEFAULT_VALUES);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
 
   // Cleanup sweep state. Lives outside `values` because it's a one-shot
   // action (not a field to persist) and we want to show the report
@@ -131,7 +131,6 @@ export function SettingsSheet({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setSaved(false);
 
     // Autostart lives in the OS registry, not the `config` table, so
     // we ask the plugin for it in parallel with the config reads.
@@ -213,7 +212,8 @@ export function SettingsSheet({
           }
         })(),
       ]);
-      setSaved(true);
+      toast.success("Configuración guardada");
+      onOpenChange(false);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -225,9 +225,9 @@ export function SettingsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-6 overflow-y-auto sm:max-w-lg"
+        className="flex w-full flex-col gap-6 overflow-x-hidden overflow-y-auto px-6 py-6 sm:max-w-xl"
       >
-        <SheetHeader>
+        <SheetHeader className="p-0">
           <SheetTitle>Configuración</SheetTitle>
           <SheetDescription>
             Ajustes globales. Se aplican a todos los recordatorios.
@@ -237,11 +237,6 @@ export function SettingsSheet({
         {error && (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {error}
-          </div>
-        )}
-        {saved && !error && (
-          <div className="rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm text-primary">
-            Guardado ✓
           </div>
         )}
 
