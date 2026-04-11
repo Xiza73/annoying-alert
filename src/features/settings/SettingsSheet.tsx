@@ -13,6 +13,11 @@
  * (start without end) could produce a weird scheduler state.
  */
 
+import {
+  disable as disableAutostart,
+  enable as enableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
 import { Save } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -51,6 +56,7 @@ interface SettingsValues {
   ntfyServer: string;
   ntfyTopic: string;
   startMinimized: boolean;
+  autostartEnabled: boolean;
 }
 
 const DEFAULT_VALUES: SettingsValues = {
@@ -61,6 +67,7 @@ const DEFAULT_VALUES: SettingsValues = {
   ntfyServer: "https://ntfy.sh",
   ntfyTopic: "",
   startMinimized: false,
+  autostartEnabled: false,
 };
 
 /** Accepts `"HH:MM"` with optional leading zeros (e.g. "7:30" or "07:30"). */
@@ -91,11 +98,21 @@ export function SettingsSheet({
     setError(null);
     setSaved(false);
 
-    Promise.all(CONFIG_KEYS.map((k) => getConfig(k)))
+    // Autostart lives in the OS registry, not the `config` table, so
+    // we ask the plugin for it in parallel with the config reads.
+    Promise.all([
+      ...CONFIG_KEYS.map((k) => getConfig(k)),
+      isAutostartEnabled().catch(() => false),
+    ])
       .then((results) => {
         if (cancelled) return;
+        const configResults = results.slice(
+          0,
+          CONFIG_KEYS.length,
+        ) as (string | null)[];
+        const autostart = results[CONFIG_KEYS.length] as boolean;
         const map = Object.fromEntries(
-          CONFIG_KEYS.map((k, i) => [k, results[i] ?? null]),
+          CONFIG_KEYS.map((k, i) => [k, configResults[i] ?? null]),
         );
         setValues({
           quietHoursEnabled: map["quiet_hours_enabled"] === "1",
@@ -106,6 +123,7 @@ export function SettingsSheet({
           ntfyServer: map["ntfy_server"] ?? DEFAULT_VALUES.ntfyServer,
           ntfyTopic: map["ntfy_topic"] ?? DEFAULT_VALUES.ntfyTopic,
           startMinimized: map["start_minimized"] === "1",
+          autostartEnabled: autostart,
         });
       })
       .catch((err: unknown) => {
@@ -147,6 +165,18 @@ export function SettingsSheet({
         setConfig("ntfy_server", values.ntfyServer.trim()),
         setConfig("ntfy_topic", values.ntfyTopic.trim()),
         setConfig("start_minimized", values.startMinimized ? "1" : "0"),
+        // Mirror the autostart toggle into the OS registry. We check
+        // the current state first to avoid no-op writes that would
+        // bump `HKCU\...\Run` last-modified for nothing.
+        (async () => {
+          const current = await isAutostartEnabled().catch(() => null);
+          if (current === values.autostartEnabled) return;
+          if (values.autostartEnabled) {
+            await enableAutostart();
+          } else {
+            await disableAutostart();
+          }
+        })(),
       ]);
       setSaved(true);
     } catch (err) {
@@ -248,21 +278,41 @@ export function SettingsSheet({
         </section>
 
         {/* ── Startup ─────────────────────────────────────────────── */}
-        <section className="flex items-center justify-between gap-4">
-          <div>
-            <h3 className="font-heading text-lg">Arranque</h3>
-            <p className="text-xs text-muted-foreground">
-              Iniciar Waqyay minimizado en la bandeja del sistema. El
-              scheduler sigue corriendo; la ventana principal queda oculta
-              hasta que hagas click en el ícono del tray.
-            </p>
+        <section className="flex flex-col gap-4">
+          <h3 className="font-heading text-lg">Arranque</h3>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Iniciar con Windows</p>
+              <p className="text-xs text-muted-foreground">
+                Agrega Waqyay al arranque del usuario (HKCU Run). No
+                requiere permisos de administrador.
+              </p>
+            </div>
+            <Switch
+              checked={values.autostartEnabled}
+              onCheckedChange={(checked) =>
+                setValues((v) => ({ ...v, autostartEnabled: checked }))
+              }
+            />
           </div>
-          <Switch
-            checked={values.startMinimized}
-            onCheckedChange={(checked) =>
-              setValues((v) => ({ ...v, startMinimized: checked }))
-            }
-          />
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Iniciar minimizado</p>
+              <p className="text-xs text-muted-foreground">
+                Al abrir Waqyay, la ventana principal arranca oculta en
+                la bandeja. El scheduler sigue corriendo. Ideal combinado
+                con «Iniciar con Windows».
+              </p>
+            </div>
+            <Switch
+              checked={values.startMinimized}
+              onCheckedChange={(checked) =>
+                setValues((v) => ({ ...v, startMinimized: checked }))
+              }
+            />
+          </div>
         </section>
 
         {/* ── ntfy ────────────────────────────────────────────────── */}

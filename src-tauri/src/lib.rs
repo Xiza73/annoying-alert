@@ -26,6 +26,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // Autostart on login. No extra args — if the user has
+        // `start_minimized` enabled the tray module reads that config
+        // key at startup, so a plain launch is enough.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             // Initialize the SQLite database and register it as Tauri state.
             // Any command can now grab it via `State<'_, db::DbState>`.

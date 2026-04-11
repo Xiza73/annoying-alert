@@ -21,6 +21,12 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 
+# Autostart on login. On Windows this writes to HKCU\...\Run, which
+# is per-user and requires no elevation — plays nicely with our per-user
+# MSI install. The frontend toggles it via `@tauri-apps/plugin-autostart`
+# in the SettingsSheet.
+tauri-plugin-autostart = "2"
+
 # Serialization: serde is the de-facto standard. `derive` enables
 # #[derive(Serialize, Deserialize)] on our structs so Tauri can
 # automatically convert them to/from JSON across the IPC bridge.
