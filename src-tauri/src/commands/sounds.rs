@@ -35,7 +35,7 @@ use std::path::PathBuf;
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
@@ -52,6 +52,7 @@ const ALLOWED_EXTS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a"];
 #[derive(Debug, Serialize)]
 pub struct SavedSound {
     pub filename: String,
+    pub display_name: String,
     pub bytes: usize,
 }
 
@@ -82,6 +83,7 @@ fn sounds_dir(app: &AppHandle) -> Result<PathBuf, CommandError> {
 #[tauri::command]
 pub fn save_sound_file(
     app: AppHandle,
+    state: State<'_, DbState>,
     original_name: String,
     base64: String,
 ) -> CommandResult<SavedSound> {
@@ -140,10 +142,61 @@ pub fn save_sound_file(
         path.display()
     );
 
+    // Upsert metadata. INSERT OR IGNORE: if a user re-uploads the
+    // same bytes, the existing display_name is preserved — we don't
+    // overwrite a label they may have chosen deliberately.
+    //
+    // `original_name` is the basename the user picked; we store the
+    // full thing (not just the stem) so the Select shows e.g.
+    // "alarm-short.mp3" instead of a 64-char hash.
+    let display_name = sanitize_display_name(&original_name);
+    {
+        let conn = state.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO sound_files \
+             (filename, display_name, original_name, bytes) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![filename, display_name, original_name, bytes.len() as i64],
+        )?;
+    }
+
+    // Read back the effective display_name — it may be the one we
+    // just inserted, or an older one from a previous upload.
+    let effective_display = {
+        let conn = state.lock();
+        conn.query_row(
+            "SELECT display_name FROM sound_files WHERE filename = ?1",
+            params![filename],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| display_name.clone())
+    };
+
     Ok(SavedSound {
         filename,
+        display_name: effective_display,
         bytes: bytes.len(),
     })
+}
+
+/// Produce a user-facing display name from the original filename the
+/// user picked. Trims whitespace, collapses empty names, and caps
+/// length so a pathologically long upload can't blow out the UI.
+fn sanitize_display_name(original: &str) -> String {
+    let basename = std::path::Path::new(original)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(original)
+        .trim();
+    if basename.is_empty() {
+        return "sonido".into();
+    }
+    // 80 chars is plenty for a Select row without breaking the layout.
+    if basename.chars().count() > 80 {
+        let prefix: String = basename.chars().take(77).collect();
+        return format!("{prefix}...");
+    }
+    basename.to_string()
 }
 
 /// Read a previously saved sound back as a `data:audio/<mime>;base64,...`
@@ -276,6 +329,14 @@ pub(crate) fn sweep_orphans(app: &AppHandle, conn: &Connection) -> CommandResult
                 removed += 1;
                 bytes_freed += size;
                 log::info!("swept orphan sound {name} ({size} bytes)");
+                // Best-effort: drop the metadata row too so
+                // `sound_files` doesn't accumulate stale entries.
+                if let Err(e) = conn.execute(
+                    "DELETE FROM sound_files WHERE filename = ?1",
+                    params![name],
+                ) {
+                    log::warn!("failed to delete sound_files row for {name}: {e}");
+                }
             }
             Err(e) => log::warn!("failed to remove orphan sound {name}: {e}"),
         }
@@ -308,6 +369,10 @@ pub fn cleanup_unused_sounds(
 #[derive(Debug, Serialize)]
 pub struct SavedSoundMeta {
     pub filename: String,
+    /// Human-facing label. Defaults to the original upload name;
+    /// falls back to the filename when no `sound_files` row exists
+    /// (e.g. sounds that predate the v2 migration).
+    pub display_name: String,
     pub bytes: u64,
     /// How many reminders currently point at this file. Lets the UI
     /// show "usado por 3 recordatorios" and makes it obvious which
@@ -344,6 +409,18 @@ pub fn list_saved_sounds(
         .filter_map(Result::ok)
         .collect();
 
+    // Display names keyed by filename. Sounds uploaded before the v2
+    // migration won't have an entry here — we fall back to the bare
+    // filename in the per-entry loop below.
+    let mut display_stmt =
+        conn.prepare("SELECT filename, display_name FROM sound_files")?;
+    let displays: HashMap<String, String> = display_stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .filter_map(Result::ok)
+        .collect();
+
     let entries = std::fs::read_dir(&dir)
         .map_err(|e| CommandError::InvalidInput(format!("readdir sounds: {e}")))?;
 
@@ -366,18 +443,24 @@ pub fn list_saved_sounds(
 
         let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
         let references = refs.get(&filename).copied().unwrap_or(0);
+        let display_name = displays
+            .get(&filename)
+            .cloned()
+            .unwrap_or_else(|| filename.clone());
         out.push(SavedSoundMeta {
             filename,
+            display_name,
             bytes,
             references,
         });
     }
 
-    // Most-referenced first, ties broken by filename for determinism.
+    // Most-referenced first, ties broken by display_name for a stable
+    // alphabetical fallback when counts are equal.
     out.sort_by(|a, b| {
         b.references
             .cmp(&a.references)
-            .then_with(|| a.filename.cmp(&b.filename))
+            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
     });
 
     Ok(out)

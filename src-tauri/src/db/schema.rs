@@ -81,4 +81,9 @@ pub const DEFAULT_CONFIG: &[(&str, &str)] = &[
     ("default_sound_l3", "default"),
     ("default_sound_l4", "default"),
     ("default_sound_l5", "default"),
+    // Global master volume multiplier applied on top of the per-level
+    // curve in the React overlay. Stored as a string-encoded float
+    // 0.0..1.0 because the `config` table is key/value TEXT. Default
+    // 0.8 matches the pre-fix behavior for most levels.
+    ("alarm_volume", "0.8"),
 ];

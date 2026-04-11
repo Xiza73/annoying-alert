@@ -93,6 +93,12 @@ export async function setConfig(key: string, value: string): Promise<void> {
  */
 export interface SavedSound {
   filename: string;
+  /**
+   * Human-facing label chosen at upload time. Defaults to the original
+   * file basename (`alarm.mp3`) so users see something recognizable in
+   * the gallery instead of the 64-char SHA-256 stem.
+   */
+  display_name: string;
   bytes: number;
 }
 
@@ -125,6 +131,8 @@ export async function getSoundDataUrl(filename: string): Promise<string> {
  */
 export interface SavedSoundMeta {
   filename: string;
+  /** Human-facing label (original upload name). */
+  display_name: string;
   bytes: number;
   /** How many reminders currently point at this file. */
   references: number;

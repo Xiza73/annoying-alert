@@ -15,6 +15,17 @@
  * The synthetic route was picked specifically so the MSI installer
  * stays tiny and the app works immediately after install — no user
  * ceremony to pick a sound before the first reminder fires.
+ *
+ * # Loop semantics
+ *
+ * Waqyay is supposed to be *impossible to ignore*. Short custom
+ * clips (1-2s alarms, single beeps) would finish and leave a silent
+ * overlay staring at the user. That's the opposite of intrusive. So
+ * the default on fire is **loop until dismissed** — the audio keeps
+ * playing until `stop()` is called from the overlay's unmount.
+ *
+ * The synthetic beep pattern also loops, with a short gap between
+ * cycles so the user can still think between bursts.
  */
 
 import { getSoundDataUrl } from "@/features/reminders/api";
@@ -27,6 +38,13 @@ export interface OverlaySoundController {
   stop: () => void;
 }
 
+export interface OverlaySoundOptions {
+  /** Global master multiplier applied on top of the level curve (0..1). */
+  masterVolume?: number;
+  /** Loop the sound until `stop()` is called. Default: true. */
+  loop?: boolean;
+}
+
 /**
  * Build an `OverlaySoundController` for a given (soundFile, level).
  * Does NOT start playback automatically — the caller decides when to
@@ -35,34 +53,43 @@ export interface OverlaySoundController {
 export function createOverlaySound(
   soundFile: string,
   level: number,
+  options: OverlaySoundOptions = {},
 ): OverlaySoundController {
+  const masterVolume = clamp01(options.masterVolume ?? 1);
+  const loop = options.loop ?? true;
+
   // Normalize empty string / legacy "default" to synthetic mode.
   const useCustom = soundFile.trim().length > 0 && soundFile !== "default";
 
   let audioEl: HTMLAudioElement | null = null;
   let ctx: AudioContext | null = null;
+  // Stopped flag doubles as the loop-exit signal for the synth path
+  // and as a guard so `play()` is idempotent.
+  let stopped = false;
 
   async function play(): Promise<void> {
     if (useCustom) {
       try {
         const url = await getSoundDataUrl(soundFile);
         audioEl = new Audio(url);
-        audioEl.volume = volumeForLevel(level);
+        audioEl.volume = clamp01(volumeForLevel(level) * masterVolume);
+        audioEl.loop = loop;
         await audioEl.play();
       } catch (err) {
         console.warn("overlay: custom sound failed, falling back", err);
-        playSynth(level).catch((synthErr: unknown) => {
+        synthLoop().catch((synthErr: unknown) => {
           console.warn("overlay: synth fallback also failed", synthErr);
         });
       }
     } else {
-      await playSynth(level).catch((err: unknown) => {
+      synthLoop().catch((err: unknown) => {
         console.warn("overlay: synth playback failed", err);
       });
     }
   }
 
   function stop(): void {
+    stopped = true;
     audioEl?.pause();
     audioEl = null;
     if (ctx !== null && ctx.state !== "closed") {
@@ -71,12 +98,43 @@ export function createOverlaySound(
     ctx = null;
   }
 
-  async function playSynth(lvl: number): Promise<void> {
+  /**
+   * Loop the synthetic beep pattern until `stopped` flips. We keep a
+   * small gap between cycles (600ms for L1/L2, shorter for higher
+   * levels) so the pattern doesn't turn into a single continuous
+   * noise. Early-return after every step so cancelling is instant.
+   */
+  async function synthLoop(): Promise<void> {
     ctx = new AudioContext();
-    await playBeepPattern(ctx, lvl);
+    const gap = gapForLevel(level);
+    while (!stopped) {
+      await playBeepPattern(ctx, level, masterVolume);
+      if (stopped || !loop) break;
+      await silence(gap);
+    }
   }
 
   return { play, stop };
+}
+
+/**
+ * One-shot preview helper used by the SettingsSheet volume slider. It
+ * plays a single synth pattern at the requested level + volume and
+ * resolves when done. No loop, no file I/O, zero coupling to the
+ * reminder state — perfect for "Probar".
+ */
+export async function playPreview(
+  level: number,
+  masterVolume: number,
+): Promise<void> {
+  const ctx = new AudioContext();
+  try {
+    await playBeepPattern(ctx, level, clamp01(masterVolume));
+  } finally {
+    if (ctx.state !== "closed") {
+      void ctx.close();
+    }
+  }
 }
 
 // ─── Synthetic beep patterns ─────────────────────────────────────────────────
@@ -84,7 +142,8 @@ export function createOverlaySound(
 /**
  * Scale output volume (0..1) by intrusiveness level. L1/L2 are quiet
  * toasts — we match that with a softer beep; L5 is a full takeover, so
- * we crank it. Users can still adjust their OS master volume.
+ * we crank it. Users can still adjust their OS master volume, and the
+ * global `masterVolume` further multiplies this.
  */
 function volumeForLevel(level: number): number {
   switch (level) {
@@ -102,31 +161,52 @@ function volumeForLevel(level: number): number {
 }
 
 /**
- * Synthesize a short beep pattern. Higher levels get more beeps and a
- * rising pitch sweep. The whole thing takes under 2s at every level so
- * it never outlasts the user's reaction time.
+ * Silence gap between loop iterations, in milliseconds. Longer at low
+ * levels so the user isn't bombarded; shorter at L5 where continuous
+ * pressure is the point.
  */
-async function playBeepPattern(ctx: AudioContext, level: number): Promise<void> {
-  const volume = volumeForLevel(level);
+function gapForLevel(level: number): number {
   switch (level) {
     case 1:
-      // Soft single blip.
+      return 2500;
+    case 2:
+      return 1800;
+    case 3:
+      return 1200;
+    case 4:
+      return 800;
+    default:
+      return 500;
+  }
+}
+
+/**
+ * Synthesize a short beep pattern. Higher levels get more beeps and a
+ * rising pitch sweep. The whole thing takes under 2s at every level so
+ * it never outlasts the user's reaction time inside a single loop
+ * iteration.
+ */
+async function playBeepPattern(
+  ctx: AudioContext,
+  level: number,
+  masterVolume: number,
+): Promise<void> {
+  const volume = clamp01(volumeForLevel(level) * masterVolume);
+  switch (level) {
+    case 1:
       await beep(ctx, { freq: 880, duration: 0.12, volume });
       break;
     case 2:
-      // Two quick blips.
       await beep(ctx, { freq: 880, duration: 0.12, volume });
       await silence(80);
       await beep(ctx, { freq: 880, duration: 0.12, volume });
       break;
     case 3:
-      // Classic "ding dong" — two tones.
       await beep(ctx, { freq: 880, duration: 0.18, volume });
       await silence(60);
       await beep(ctx, { freq: 660, duration: 0.22, volume });
       break;
     case 4:
-      // Three rising tones.
       await beep(ctx, { freq: 660, duration: 0.15, volume });
       await silence(40);
       await beep(ctx, { freq: 880, duration: 0.15, volume });
@@ -168,8 +248,6 @@ function beep(ctx: AudioContext, opts: BeepOpts): Promise<void> {
     const now = ctx.currentTime;
     const attack = 0.003;
     const release = 0.003;
-    // Ramp up → sustain → ramp down. `linearRampToValueAtTime` is the
-    // cheapest way to avoid pops.
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(opts.volume, now + attack);
     gain.gain.setValueAtTime(opts.volume, now + opts.duration - release);
@@ -190,4 +268,12 @@ function silence(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+/** Clamp a float into the closed interval [0, 1]. */
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
 }

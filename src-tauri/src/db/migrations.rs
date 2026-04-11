@@ -17,7 +17,7 @@
 use rusqlite::Connection;
 
 /// Current target schema version. Increment when adding a migration.
-pub const TARGET_VERSION: i32 = 1;
+pub const TARGET_VERSION: i32 = 2;
 
 /// Ordered list of migrations. Each tuple is `(version, sql)`. The SQL may
 /// contain multiple statements and is executed with `execute_batch`.
@@ -26,6 +26,25 @@ const MIGRATIONS: &[(i32, &str)] = &[
     // `schema::INITIAL_SCHEMA` during bootstrap, so we just bump the
     // user_version to 1 to signal the DB is at the baseline.
     (1, "-- baseline, created by INITIAL_SCHEMA"),
+    // Version 2: sound_files metadata table. Adds human-friendly
+    // display names for content-addressed sound files. Physical
+    // storage is still `<hash>.<ext>` on disk (dedup, no collisions)
+    // but the UI now shows whatever name the file had when first
+    // uploaded. On re-upload of the same bytes we keep the existing
+    // display_name via INSERT OR IGNORE, so a user who renamed a
+    // sound doesn't get their label silently reverted.
+    (
+        2,
+        r#"
+CREATE TABLE IF NOT EXISTS sound_files (
+    filename      TEXT PRIMARY KEY,
+    display_name  TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    bytes         INTEGER NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+        "#,
+    ),
 ];
 
 /// Read the current schema version from SQLite's `user_version` pragma.

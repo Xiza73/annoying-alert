@@ -77,6 +77,11 @@ export function Overlay({
     LOCKDOWN_SECONDS[level],
   );
   const [defaultSnooze, setDefaultSnooze] = useState<number>(10);
+  // Global volume multiplier read from the `alarm_volume` config key.
+  // `null` while we're still waiting for the IPC read — we delay the
+  // sound playback until this resolves so the first audible burst
+  // already respects the user's setting.
+  const [masterVolume, setMasterVolume] = useState<number | null>(null);
 
   useEffect(() => {
     getReminder(reminderId)
@@ -84,16 +89,32 @@ export function Overlay({
       .catch((err: unknown) => setError(String(err)));
   }, [reminderId]);
 
-  // Play the reminder sound once when the data loads. Custom file if
-  // the reminder has one, synthetic beep pattern otherwise. The
-  // controller also exposes `stop()` so we silence it on unmount /
-  // snooze / dismiss.
+  // Read the global alarm volume once. Falls back to 0.8 if the key
+  // is missing, unparseable, or the IPC call fails — we never want
+  // the overlay to go silent just because config loading hiccupped.
+  useEffect(() => {
+    getConfig("alarm_volume")
+      .then((value) => {
+        const parsed = value !== null ? Number.parseFloat(value) : NaN;
+        setMasterVolume(Number.isFinite(parsed) ? parsed : 0.8);
+      })
+      .catch(() => setMasterVolume(0.8));
+  }, []);
+
+  // Play the reminder sound once the data AND volume config load.
+  // The sound loops until the component unmounts (dismiss / snooze /
+  // toggle-off from the main window), matching the "impossible to
+  // ignore" promise: short alarms don't leave a silent overlay.
   useEffect(() => {
     if (reminder === null) return;
-    const controller = createOverlaySound(reminder.sound_file, level);
+    if (masterVolume === null) return;
+    const controller = createOverlaySound(reminder.sound_file, level, {
+      masterVolume,
+      loop: true,
+    });
     void controller.play();
     return () => controller.stop();
-  }, [reminder, level]);
+  }, [reminder, level, masterVolume]);
 
   // Read the user's configured default snooze once. Falls back to 10m
   // if the key is missing or unparseable — matches the schema seed.

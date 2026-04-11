@@ -203,19 +203,6 @@ export function ReminderForm({
     }
   }
 
-  /**
-   * Shorten a 64-char hex hash to something readable like `a3f4…9e2c.mp3`
-   * so the Select doesn't get absurdly wide. Non-hash filenames (e.g.
-   * if a user sideloads one) pass through unchanged.
-   */
-  function shortLabel(filename: string): string {
-    const dot = filename.lastIndexOf(".");
-    if (dot <= 0) return filename;
-    const stem = filename.slice(0, dot);
-    const ext = filename.slice(dot);
-    if (stem.length <= 12) return filename;
-    return `${stem.slice(0, 4)}…${stem.slice(-4)}${ext}`;
-  }
 
   async function submit(data: ReminderFormInput) {
     // Resolver has already validated, but we still need to run the
@@ -494,7 +481,7 @@ export function ReminderForm({
               {savedSounds.map((s) => (
                 <SelectItem key={s.filename} value={s.filename}>
                   <span className="flex items-center gap-2">
-                    <span>{shortLabel(s.filename)}</span>
+                    <span>{s.display_name}</span>
                     <span className="text-xs text-muted-foreground">
                       · {(s.bytes / 1024).toFixed(0)} KB
                       {s.references > 0 && ` · usado ${s.references}×`}

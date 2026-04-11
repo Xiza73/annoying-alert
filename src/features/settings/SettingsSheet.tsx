@@ -18,7 +18,7 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
-import { Save, Trash2 } from "lucide-react";
+import { Play, Save, Trash2, Volume2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -28,6 +28,7 @@ import {
   setConfig,
   type SweepReport,
 } from "@/features/reminders/api";
+import { playPreview } from "@/features/reminders/overlay/sound";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/label";
@@ -38,6 +39,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/shared/components/ui/sheet";
+import { Slider } from "@/shared/components/ui/slider";
 import { Switch } from "@/shared/components/ui/switch";
 
 /**
@@ -52,6 +54,7 @@ const CONFIG_KEYS = [
   "ntfy_server",
   "ntfy_topic",
   "start_minimized",
+  "alarm_volume",
 ] as const;
 
 interface SettingsValues {
@@ -63,6 +66,11 @@ interface SettingsValues {
   ntfyTopic: string;
   startMinimized: boolean;
   autostartEnabled: boolean;
+  /**
+   * Master volume multiplier for alarm playback (0..1). Applied on top
+   * of the intrusiveness-level curve defined in `overlay/sound.ts`.
+   */
+  alarmVolume: number;
 }
 
 const DEFAULT_VALUES: SettingsValues = {
@@ -74,6 +82,7 @@ const DEFAULT_VALUES: SettingsValues = {
   ntfyTopic: "",
   startMinimized: false,
   autostartEnabled: false,
+  alarmVolume: 0.8,
 };
 
 /** Accepts `"HH:MM"` with optional leading zeros (e.g. "7:30" or "07:30"). */
@@ -148,6 +157,18 @@ export function SettingsSheet({
         const map = Object.fromEntries(
           CONFIG_KEYS.map((k, i) => [k, configResults[i] ?? null]),
         );
+        // Parse the alarm_volume float from its TEXT storage. Any
+        // garbage (missing key, NaN, non-numeric) falls back to the
+        // 0.8 default so the slider always has a valid position.
+        const rawVolume = map["alarm_volume"];
+        const parsedVolume =
+          rawVolume !== null && rawVolume !== undefined
+            ? Number.parseFloat(rawVolume)
+            : NaN;
+        const alarmVolume = Number.isFinite(parsedVolume)
+          ? Math.min(1, Math.max(0, parsedVolume))
+          : DEFAULT_VALUES.alarmVolume;
+
         setValues({
           quietHoursEnabled: map["quiet_hours_enabled"] === "1",
           quietHoursStart: map["quiet_hours_start"] ?? DEFAULT_VALUES.quietHoursStart,
@@ -158,6 +179,7 @@ export function SettingsSheet({
           ntfyTopic: map["ntfy_topic"] ?? DEFAULT_VALUES.ntfyTopic,
           startMinimized: map["start_minimized"] === "1",
           autostartEnabled: autostart,
+          alarmVolume,
         });
       })
       .catch((err: unknown) => {
@@ -199,6 +221,10 @@ export function SettingsSheet({
         setConfig("ntfy_server", values.ntfyServer.trim()),
         setConfig("ntfy_topic", values.ntfyTopic.trim()),
         setConfig("start_minimized", values.startMinimized ? "1" : "0"),
+        // Persist with 2 decimals: the slider has 20 steps (0.05),
+        // which is plenty, and the shorter string keeps debugging
+        // the config table more pleasant.
+        setConfig("alarm_volume", values.alarmVolume.toFixed(2)),
         // Mirror the autostart toggle into the OS registry. We check
         // the current state first to avoid no-op writes that would
         // bump `HKCU\...\Run` last-modified for nothing.
@@ -239,6 +265,50 @@ export function SettingsSheet({
             {error}
           </div>
         )}
+
+        {/* ── Alarm volume + preview ──────────────────────────────── */}
+        <section className="flex flex-col gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 font-heading text-lg">
+              <Volume2 className="size-4" />
+              Volumen de alarma
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Multiplicador global aplicado a todos los recordatorios.
+              Por debajo sigue escalando según el nivel de intrusividad.
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <Slider
+              value={[Math.round(values.alarmVolume * 100)]}
+              min={0}
+              max={100}
+              step={5}
+              onValueChange={(arr) =>
+                setValues((v) => ({
+                  ...v,
+                  alarmVolume: (arr[0] ?? 0) / 100,
+                }))
+              }
+              className="flex-1"
+              aria-label="Volumen de alarma"
+            />
+            <span className="w-12 text-right font-mono text-xs text-muted-foreground">
+              {Math.round(values.alarmVolume * 100)}%
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void playPreview(3, values.alarmVolume);
+              }}
+            >
+              <Play className="mr-2 size-4" />
+              Probar
+            </Button>
+          </div>
+        </section>
 
         {/* ── Quiet hours ─────────────────────────────────────────── */}
         <section className="flex flex-col gap-4">
