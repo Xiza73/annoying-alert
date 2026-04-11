@@ -96,6 +96,62 @@ pub fn compute_after_fire(reminder: &Reminder, now: NaiveDateTime) -> AfterFire 
     }
 }
 
+/// Compute the `next_trigger` when a paused reminder is resumed at `now`.
+///
+/// This is distinct from [`compute_after_fire`] in a subtle but critical
+/// way: resume does NOT advance any state machine. Pomodoro phase and
+/// cycle counters stay exactly where they were — we only rebase the
+/// pending fire onto the resume moment so stale scheduling can't cause
+/// an immediate spurious alarm.
+///
+/// # Why this exists
+///
+/// Before this helper, pause/resume was a pure `is_active` flip.
+/// That meant an interval reminder paused for 10 minutes, then resumed,
+/// would still carry `next_trigger = old_now + 1min`, which is now in
+/// the past, so the scheduler fires it on the very next tick. Users
+/// rightly called this a bug: pausing should buy them real silence.
+///
+/// # Behavior per kind
+///
+/// - `Once`: `next_trigger` stays at the original `trigger_at`. If that
+///   instant has already passed the reminder fires on the next tick —
+///   the user asked to resume a missed one-shot alarm, so firing it is
+///   the expected "catch-up" behavior.
+/// - `Recurring Interval`: `next_trigger = now + interval_minutes`.
+/// - `Recurring Cron`: `None` (cron scheduling is unimplemented; the
+///   scheduler already skips these).
+/// - `Pomodoro Work`: `next_trigger = now + work_minutes`, phase stays
+///   Work, cycles untouched.
+/// - `Pomodoro Break`: `next_trigger = now + break_minutes`, phase stays
+///   Break, cycles untouched.
+pub fn compute_after_resume(
+    reminder: &Reminder,
+    now: NaiveDateTime,
+) -> Option<NaiveDateTime> {
+    match &reminder.kind {
+        ReminderKind::Once { trigger_at } => Some(*trigger_at),
+        ReminderKind::Recurring { rule } => match rule {
+            RecurrenceRule::Interval { minutes } => {
+                Some(now + Duration::minutes(*minutes))
+            }
+            RecurrenceRule::Cron { .. } => None,
+        },
+        ReminderKind::Pomodoro {
+            work_minutes,
+            break_minutes,
+            phase,
+            ..
+        } => {
+            let delta = match phase {
+                PomodoroPhase::Work => *work_minutes,
+                PomodoroPhase::Break => *break_minutes,
+            };
+            Some(now + Duration::minutes(delta))
+        }
+    }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -189,6 +245,57 @@ mod tests {
         assert_eq!(after.pomodoro_phase_sql, Some("break"));
         assert_eq!(after.pomodoro_cycles, Some(2));
         assert!(after.is_active);
+    }
+
+    #[test]
+    fn resume_interval_rebases_next_trigger_onto_now() {
+        let r = reminder_with(ReminderKind::Recurring {
+            rule: RecurrenceRule::Interval { minutes: 1 },
+        });
+        // Simulates: user paused the reminder 10 minutes ago. Stored
+        // next_trigger in DB was 1 minute after the pause moment and is
+        // now 9 minutes in the past. On resume we must NOT honor that
+        // stale value — we rebase from `now`.
+        let now = at("2026-04-10 10:10:00");
+        let next = compute_after_resume(&r, now);
+        assert_eq!(next, Some(at("2026-04-10 10:11:00")));
+    }
+
+    #[test]
+    fn resume_once_preserves_original_trigger_at() {
+        let r = reminder_with(ReminderKind::Once {
+            trigger_at: at("2026-04-10 15:00:00"),
+        });
+        let next = compute_after_resume(&r, at("2026-04-10 16:00:00"));
+        // One-shot: original trigger is sacred. Past-due fires on next
+        // tick as a "missed alarm" catch-up.
+        assert_eq!(next, Some(at("2026-04-10 15:00:00")));
+    }
+
+    #[test]
+    fn resume_pomodoro_keeps_phase_but_rebases_timer() {
+        let r = reminder_with(ReminderKind::Pomodoro {
+            work_minutes: 25,
+            break_minutes: 5,
+            phase: PomodoroPhase::Break,
+            cycles_completed: 3,
+        });
+        let now = at("2026-04-10 10:00:00");
+        let next = compute_after_resume(&r, now);
+        // Was on a break when paused — resume continues the break from
+        // `now`, does not reset to work and does not bump cycles.
+        assert_eq!(next, Some(at("2026-04-10 10:05:00")));
+    }
+
+    #[test]
+    fn resume_cron_stays_dormant() {
+        let r = reminder_with(ReminderKind::Recurring {
+            rule: RecurrenceRule::Cron {
+                expression: "0 9 * * 1-5".into(),
+            },
+        });
+        let next = compute_after_resume(&r, at("2026-04-10 10:00:00"));
+        assert_eq!(next, None);
     }
 
     #[test]

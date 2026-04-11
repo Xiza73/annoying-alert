@@ -7,12 +7,13 @@
 use chrono::{Duration, Local, NaiveDateTime};
 use rusqlite::params;
 use serde::Deserialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::commands::sounds::sweep_orphans;
 use crate::commands::{CommandError, CommandResult};
 use crate::db::DbState;
 use crate::models::{Category, PomodoroPhase, RecurrenceRule, Reminder, ReminderKind};
+use crate::scheduler::next_trigger::compute_after_resume;
 
 // ─── Input DTO ──────────────────────────────────────────────────────────────
 
@@ -320,35 +321,93 @@ pub fn delete_reminder(
 
 // ─── Toggle active ──────────────────────────────────────────────────────────
 
-/// Flip the `is_active` flag on a reminder. Does NOT touch `next_trigger`:
-/// if the user wants a fresh schedule they can edit the reminder. The
-/// scheduler naturally skips inactive rows, so toggling off is enough to
-/// pause; toggling on resumes from whatever next_trigger was last stored.
+/// Flip the `is_active` flag on a reminder.
 ///
-/// Returns the updated reminder so the frontend can refresh its row
-/// without a follow-up `list_reminders` call.
+/// # Resume semantics (fix for pause/resume immediate-fire bug)
+///
+/// Naively flipping `is_active` is NOT enough: if an interval reminder
+/// was paused 10 minutes ago, its stored `next_trigger` is long past
+/// and the scheduler would fire it on the very next tick. That's
+/// exactly what users reported as "I paused it for 5 minutes, resumed,
+/// and it rang immediately".
+///
+/// To prevent that, when we're transitioning *inactive → active* we
+/// call [`compute_after_resume`] to rebase `next_trigger` onto "now".
+/// Pomodoro phase and cycle counters are NOT touched — we're resuming,
+/// not restarting.
+///
+/// Also, if an overlay window for this reminder happens to be open
+/// when the user pauses (or when they resume, as a safety net), we
+/// close it. Leaving an orphaned overlay ringing after a pause would
+/// be extremely confusing.
 #[tauri::command]
 pub fn toggle_reminder_active(
+    app: AppHandle,
     state: State<'_, DbState>,
     id: i64,
 ) -> CommandResult<Reminder> {
     let conn = state.lock();
     let now = Local::now().naive_local();
 
-    let updated = conn.execute(
+    // Load the current row first so we can (a) know which direction the
+    // toggle goes, and (b) feed it into `compute_after_resume` without a
+    // second round-trip.
+    let current: Reminder = conn
+        .query_row(
+            "SELECT * FROM reminders WHERE id = ?1",
+            params![id],
+            Reminder::from_row,
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                CommandError::NotFound(format!("reminder {id}"))
+            }
+            other => CommandError::from(other),
+        })?;
+
+    let will_be_active = !current.is_active;
+
+    // Resume path: rebase next_trigger so stale scheduling can't fire
+    // an immediate ghost alarm.
+    let new_next_trigger: Option<NaiveDateTime> = if will_be_active {
+        compute_after_resume(&current, now)
+    } else {
+        // Pause path: leave next_trigger as-is. The scheduler skips
+        // inactive rows anyway, and preserving the value lets
+        // `compute_after_resume` rebase against a known shape later.
+        current.next_trigger
+    };
+
+    conn.execute(
         r#"
         UPDATE reminders
-           SET is_active = NOT is_active,
-               updated_at = ?1
-         WHERE id = ?2
+           SET is_active   = ?1,
+               next_trigger = ?2,
+               updated_at  = ?3
+         WHERE id = ?4
         "#,
-        params![now, id],
+        params![will_be_active, new_next_trigger, now, id],
     )?;
-    if updated == 0 {
-        return Err(CommandError::NotFound(format!("reminder {id}")));
-    }
-    log::info!("toggled reminder id={id} active flag");
+    log::info!(
+        "toggled reminder id={id} active={will_be_active} next_trigger={new_next_trigger:?}"
+    );
 
+    // Drop the DB lock before touching any Tauri windows — window ops
+    // might dispatch to the main thread and we don't want to hold the
+    // mutex across that boundary.
+    drop(conn);
+
+    // Best-effort: close any overlay window still open for this
+    // reminder. On pause this kills the currently-ringing alarm; on
+    // resume it's a safety net against zombie windows.
+    let label = format!("overlay-{id}");
+    if let Some(window) = app.get_webview_window(&label) {
+        if let Err(err) = window.close() {
+            log::warn!("failed to close overlay window {label}: {err}");
+        }
+    }
+
+    let conn = state.lock();
     conn.query_row(
         "SELECT * FROM reminders WHERE id = ?1",
         params![id],

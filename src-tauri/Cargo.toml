@@ -71,4 +71,5 @@ base64 = "0.22"
 # storage means re-uploading the same file is free and the filename is
 # deterministic for testing.
 sha2 = "0.10"
+tauri-plugin-single-instance = "2.4.1"
 

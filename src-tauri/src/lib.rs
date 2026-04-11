@@ -25,6 +25,24 @@ pub fn run() {
     .init();
 
     tauri::Builder::default()
+        // Single-instance MUST be the first plugin registered. When a
+        // second instance launches, this plugin fires the callback in
+        // the already-running process and then immediately exits the
+        // second process — so whatever we do in the callback (show the
+        // main window, focus it) happens inside instance #1.
+        //
+        // This matches the Python app's behavior where relaunching the
+        // shortcut used to spawn a parallel process with its own
+        // scheduler, producing double fires.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            log::info!("single-instance: second launch detected, focusing main window");
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         // Autostart on login. No extra args — if the user has
         // `start_minimized` enabled the tray module reads that config
