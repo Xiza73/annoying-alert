@@ -9,8 +9,9 @@
  * Phase 3.4 will replace those stubs with a shadcn Sheet + RHF form.
  */
 
+import { listen } from "@tauri-apps/api/event";
 import { Plus, RefreshCcw, Settings, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ReminderFormSheet } from "@/features/reminders/components/ReminderFormSheet";
 import { RemindersList } from "@/features/reminders/components/RemindersList";
@@ -62,6 +63,19 @@ function App() {
 
   const [sheet, setSheet] = useState<FormSheetState>(CLOSED_SHEET);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Tray menu → settings bridge. The "Configuración…" item in the tray
+  // fires this event (see src-tauri/src/tray.rs::OPEN_SETTINGS_EVENT).
+  // The tray handler also shows/focuses the main window first, so by
+  // the time we receive it the window is already visible.
+  useEffect(() => {
+    const unlisten = listen("tray://open-settings", () => {
+      setSettingsOpen(true);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
 
   function handleNewReminder() {
     setSheet({ open: true, editingId: null, initialValues: undefined });

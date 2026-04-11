@@ -5,6 +5,7 @@ pub mod db;
 pub mod models;
 pub mod notifier;
 pub mod scheduler;
+pub mod tray;
 
 /// Sample command kept from the Tauri scaffold. Used by the bootstrap
 /// smoke test in `src/app/App.tsx` to confirm the IPC bridge is wired up.
@@ -36,6 +37,13 @@ pub fn run() {
             // events whenever a due reminder is processed.
             scheduler::start(app.handle())
                 .map_err(|e| Box::new(std::io::Error::other(format!("scheduler: {e:#}"))))?;
+
+            // System tray: tray icon + menu + close-to-tray interceptor.
+            // Must come after db init because `maybe_start_minimized`
+            // reads the `start_minimized` config key via DbState.
+            tray::build(app.handle())
+                .map_err(|e| Box::new(std::io::Error::other(format!("tray: {e:#}"))))?;
+            tray::maybe_start_minimized(app.handle());
 
             Ok(())
         })

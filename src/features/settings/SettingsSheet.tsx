@@ -40,6 +40,7 @@ const CONFIG_KEYS = [
   "default_snooze_minutes",
   "ntfy_server",
   "ntfy_topic",
+  "start_minimized",
 ] as const;
 
 interface SettingsValues {
@@ -49,6 +50,7 @@ interface SettingsValues {
   defaultSnoozeMinutes: string;
   ntfyServer: string;
   ntfyTopic: string;
+  startMinimized: boolean;
 }
 
 const DEFAULT_VALUES: SettingsValues = {
@@ -58,6 +60,7 @@ const DEFAULT_VALUES: SettingsValues = {
   defaultSnoozeMinutes: "10",
   ntfyServer: "https://ntfy.sh",
   ntfyTopic: "",
+  startMinimized: false,
 };
 
 /** Accepts `"HH:MM"` with optional leading zeros (e.g. "7:30" or "07:30"). */
@@ -102,6 +105,7 @@ export function SettingsSheet({
             map["default_snooze_minutes"] ?? DEFAULT_VALUES.defaultSnoozeMinutes,
           ntfyServer: map["ntfy_server"] ?? DEFAULT_VALUES.ntfyServer,
           ntfyTopic: map["ntfy_topic"] ?? DEFAULT_VALUES.ntfyTopic,
+          startMinimized: map["start_minimized"] === "1",
         });
       })
       .catch((err: unknown) => {
@@ -142,6 +146,7 @@ export function SettingsSheet({
         setConfig("default_snooze_minutes", String(snooze)),
         setConfig("ntfy_server", values.ntfyServer.trim()),
         setConfig("ntfy_topic", values.ntfyTopic.trim()),
+        setConfig("start_minimized", values.startMinimized ? "1" : "0"),
       ]);
       setSaved(true);
     } catch (err) {
@@ -240,6 +245,24 @@ export function SettingsSheet({
           <p className="text-xs text-muted-foreground">
             Valor que usa el overlay al tocar el ícono rápido de posponer.
           </p>
+        </section>
+
+        {/* ── Startup ─────────────────────────────────────────────── */}
+        <section className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="font-heading text-lg">Arranque</h3>
+            <p className="text-xs text-muted-foreground">
+              Iniciar Waqyay minimizado en la bandeja del sistema. El
+              scheduler sigue corriendo; la ventana principal queda oculta
+              hasta que hagas click en el ícono del tray.
+            </p>
+          </div>
+          <Switch
+            checked={values.startMinimized}
+            onCheckedChange={(checked) =>
+              setValues((v) => ({ ...v, startMinimized: checked }))
+            }
+          />
         </section>
 
         {/* ── ntfy ────────────────────────────────────────────────── */}
