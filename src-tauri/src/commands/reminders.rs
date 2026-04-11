@@ -66,7 +66,14 @@ pub enum ReminderKindInput {
 #[tauri::command]
 pub fn list_reminders(state: State<'_, DbState>) -> CommandResult<Vec<Reminder>> {
     let conn = state.lock();
-    let mut stmt = conn.prepare("SELECT * FROM reminders ORDER BY id ASC")?;
+    let mut stmt = conn.prepare(
+        "SELECT * FROM reminders
+         ORDER BY
+           is_active DESC,
+           CASE WHEN next_trigger IS NULL THEN 1 ELSE 0 END,
+           next_trigger ASC,
+           id ASC",
+    )?;
     let rows = stmt.query_map([], Reminder::from_row)?;
     let reminders: Vec<Reminder> = rows.collect::<Result<_, _>>()?;
     log::debug!("list_reminders: {} rows", reminders.len());
@@ -581,6 +588,7 @@ pub fn update_reminder(
             pomodoro_break_minutes = ?15,
             pomodoro_phase = ?16,
             pomodoro_cycles_completed = ?17,
+            snooze_until = NULL,
             updated_at = ?18
         WHERE id = ?19
         "#,

@@ -194,6 +194,7 @@ fn fire(
             is_active      = ?3,
             pomodoro_phase = COALESCE(?4, pomodoro_phase),
             pomodoro_cycles_completed = COALESCE(?5, pomodoro_cycles_completed),
+            snooze_until   = NULL,
             updated_at     = ?1
         WHERE id = ?6
         ",
