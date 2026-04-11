@@ -21,6 +21,24 @@ export type NaiveDateTime = string;
 
 export type PomodoroPhase = "work" | "break";
 
+/**
+ * Mirror of the Rust `Category` enum. The backend serializes variants
+ * as snake_case strings; adding or renaming a value here means the
+ * Rust side needs the matching change in `models/category.rs`.
+ *
+ * Display metadata (label, icon, accent color) lives in
+ * `features/reminders/categories.ts` — this file is pure types.
+ */
+export type Category =
+  | "general"
+  | "health"
+  | "work"
+  | "study"
+  | "personal"
+  | "fitness"
+  | "home"
+  | "finance";
+
 // ─── Discriminated unions ───────────────────────────────────────────────────
 
 export type RecurrenceRule =
@@ -54,7 +72,7 @@ export interface Reminder {
   send_desktop: boolean;
   sound_file: string;
   color: string;
-  category: string;
+  category: Category;
   created_at: NaiveDateTime;
   updated_at: NaiveDateTime;
 }
@@ -71,9 +89,16 @@ export interface CreateReminderInput {
   description?: string;
   intrusiveness: number;
   kind: ReminderKindInput;
-  category?: string;
+  category?: Category;
   color?: string;
   sound_file?: string;
   send_desktop?: boolean;
   send_mobile?: boolean;
 }
+
+/**
+ * Shape-identical to CreateReminderInput on purpose — the edit form
+ * reuses the create form verbatim. The backend preserves created_at,
+ * last_triggered, and pomodoro state across same-kind edits.
+ */
+export type UpdateReminderInput = CreateReminderInput;
