@@ -15,6 +15,7 @@
 //! toast without needing to know our internal error taxonomy.
 
 pub mod config;
+pub mod overlay;
 pub mod reminders;
 pub mod sounds;
 

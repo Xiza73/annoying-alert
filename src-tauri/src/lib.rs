@@ -88,6 +88,7 @@ pub fn run() {
             commands::sounds::get_sound_data_url,
             commands::sounds::list_saved_sounds,
             commands::sounds::cleanup_unused_sounds,
+            commands::overlay::dismiss_overlay,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

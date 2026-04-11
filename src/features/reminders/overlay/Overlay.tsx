@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Clock, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -135,7 +136,7 @@ export function Overlay({
   async function handleSnooze(minutes: number) {
     try {
       await snoozeReminder(reminderId, minutes);
-      await closeSelf();
+      await closeSelf(reminderId);
     } catch (err) {
       console.error("overlay: snooze failed", err);
       setError(String(err));
@@ -152,10 +153,10 @@ export function Overlay({
     if (reminder === null) return; // wait for data first
 
     const handle = window.setTimeout(() => {
-      void closeSelf();
+      void closeSelf(reminderId);
     }, seconds * 1000);
     return () => window.clearTimeout(handle);
-  }, [level, reminder]);
+  }, [level, reminder, reminderId]);
 
   // ── Lockdown countdown for L4/L5 ───────────────────────────────────────
   //
@@ -243,7 +244,7 @@ export function Overlay({
         <ToastVariant
           reminder={reminder}
           level={level}
-          onDismiss={closeSelf}
+          onDismiss={() => void closeSelf(reminderId)}
           onSnooze={() => void handleSnooze(defaultSnooze)}
           defaultSnooze={defaultSnooze}
         />
@@ -252,7 +253,7 @@ export function Overlay({
       return (
         <StandardVariant
           reminder={reminder}
-          onDismiss={closeSelf}
+          onDismiss={() => void closeSelf(reminderId)}
           onSnooze={handleSnooze}
           defaultSnooze={defaultSnooze}
         />
@@ -261,7 +262,7 @@ export function Overlay({
       return (
         <StandardVariant
           reminder={reminder}
-          onDismiss={closeSelf}
+          onDismiss={() => void closeSelf(reminderId)}
           onSnooze={handleSnooze}
           defaultSnooze={defaultSnooze}
           canDismiss={canDismiss}
@@ -275,7 +276,7 @@ export function Overlay({
           reminder={reminder}
           canDismiss={canDismiss}
           lockdownRemaining={lockdownRemaining}
-          onDismiss={closeSelf}
+          onDismiss={() => void closeSelf(reminderId)}
           onSnooze={handleSnooze}
           defaultSnooze={defaultSnooze}
         />
@@ -377,17 +378,26 @@ function formatMinutes(m: number): string {
 // ─── Dismiss helper ──────────────────────────────────────────────────────────
 
 /**
- * Close the current webview window. Wrapped in a helper so every variant
- * uses the same error-handling path — we log to the dev console if the
- * close fails for some bizarre reason but don't surface it to the user
- * (there's nothing they can do about it).
+ * Close the current webview window via a Rust command.
+ *
+ * On Windows, Tauri v2 + WebView2 blocks `window.close()` from JS when the
+ * window is in fullscreen mode (L5 overlays). The `dismiss_overlay` Rust
+ * command works around this by calling `set_fullscreen(false)` before closing.
+ *
+ * Falls back to direct JS close if the Tauri command fails for any reason,
+ * so we never end up strictly worse than before.
  */
-async function closeSelf() {
+async function closeSelf(reminderId: number) {
   try {
-    const win = getCurrentWebviewWindow();
-    await win.close();
+    await invoke("dismiss_overlay", { reminderId });
   } catch (err) {
-    console.error("overlay: failed to close window", err);
+    console.error("overlay: failed to dismiss via command", err);
+    // Fallback: try direct JS close
+    try {
+      await getCurrentWebviewWindow().close();
+    } catch (err2) {
+      console.error("overlay: fallback close also failed", err2);
+    }
   }
 }
 
