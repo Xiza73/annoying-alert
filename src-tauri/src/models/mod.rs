@@ -5,6 +5,8 @@
 //! Tauri commands can return them directly and serde_json handles the
 //! serialization automatically.
 
+pub mod category;
 pub mod reminder;
 
+pub use category::Category;
 pub use reminder::{PomodoroPhase, RecurrenceRule, Reminder, ReminderKind};

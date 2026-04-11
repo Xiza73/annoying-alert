@@ -14,7 +14,9 @@
 //! its `Display` impl — the frontend gets a string and can show it in a
 //! toast without needing to know our internal error taxonomy.
 
+pub mod config;
 pub mod reminders;
+pub mod sounds;
 
 use serde::{Serialize, Serializer};
 
@@ -32,7 +34,6 @@ pub enum CommandError {
     InvalidInput(String),
 
     #[error("not found: {0}")]
-    #[allow(dead_code)] // will be used by get_reminder, update_reminder in next phases
     NotFound(String),
 }
 

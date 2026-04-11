@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
-  "permissions": ["core:default", "opener:default"]
+  "description": "Capability for main window + intrusive overlay windows. Grants everything the stock core:default bundle includes, plus the ability to close/focus a window from JS — which the overlay uses to dismiss itself via the 'Hecho' button.",
+  "windows": ["main", "overlay-*"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "core:window:allow-close",
+    "core:window:allow-set-focus"
+  ]
 }

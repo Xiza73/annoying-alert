@@ -11,7 +11,7 @@ use tauri::State;
 
 use crate::commands::{CommandError, CommandResult};
 use crate::db::DbState;
-use crate::models::{PomodoroPhase, RecurrenceRule, Reminder};
+use crate::models::{Category, PomodoroPhase, RecurrenceRule, Reminder, ReminderKind};
 
 // ─── Input DTO ──────────────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ pub struct CreateReminderInput {
     pub intrusiveness: i64,
     pub kind: ReminderKindInput,
     #[serde(default)]
-    pub category: Option<String>,
+    pub category: Option<Category>,
     #[serde(default)]
     pub color: Option<String>,
     #[serde(default)]
@@ -69,6 +69,41 @@ pub fn list_reminders(state: State<'_, DbState>) -> CommandResult<Vec<Reminder>>
     let reminders: Vec<Reminder> = rows.collect::<Result<_, _>>()?;
     log::debug!("list_reminders: {} rows", reminders.len());
     Ok(reminders)
+}
+
+/// Fetch a single reminder by id. Used by the intrusive overlay window —
+/// the window boots with a query param carrying the id and calls this
+/// command to render the reminder's title/description/color.
+///
+/// Returns `CommandError::NotFound` if the row does not exist.
+#[tauri::command]
+pub fn get_reminder(state: State<'_, DbState>, id: i64) -> CommandResult<Reminder> {
+    let conn = state.lock();
+    conn.query_row(
+        "SELECT * FROM reminders WHERE id = ?1",
+        params![id],
+        Reminder::from_row,
+    )
+    .map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => {
+            CommandError::NotFound(format!("reminder {id}"))
+        }
+        other => CommandError::Db(other),
+    })
+}
+
+/// Wipe every reminder and its history. Intended for smoke-test cleanup
+/// during development; will almost certainly be removed (or moved behind
+/// a confirmation dialog) when we ship a real UI.
+///
+/// Returns the number of rows deleted from `reminders`. `reminder_history`
+/// rows are removed via `ON DELETE CASCADE` declared in the schema.
+#[tauri::command]
+pub fn delete_all_reminders(state: State<'_, DbState>) -> CommandResult<usize> {
+    let conn = state.lock();
+    let deleted = conn.execute("DELETE FROM reminders", [])?;
+    log::warn!("delete_all_reminders: removed {deleted} row(s)");
+    Ok(deleted)
 }
 
 /// Insert a new reminder. Server computes: id, timestamps, next_trigger,
@@ -136,7 +171,7 @@ pub fn create_reminder(
         }
     };
 
-    let category = input.category.as_deref().unwrap_or("general");
+    let category = input.category.unwrap_or_default().as_str();
     let color = input.color.as_deref().unwrap_or("#FF4444");
     let sound_file = input.sound_file.as_deref().unwrap_or("default");
 
@@ -188,6 +223,312 @@ pub fn create_reminder(
     conn.query_row(
         "SELECT * FROM reminders WHERE id = ?1",
         [new_id],
+        Reminder::from_row,
+    )
+    .map_err(CommandError::from)
+}
+
+// ─── Snooze ─────────────────────────────────────────────────────────────────
+
+/// Snooze a reminder for `minutes` minutes from now. Writes `snooze_until`
+/// and records a `snoozed` row in history. The scheduler's `fetch_due`
+/// query already filters on `snooze_until <= now`, so the reminder will
+/// simply be skipped on every tick until the snooze expires.
+///
+/// Returns the updated reminder so the frontend can refresh the row
+/// without a follow-up list call. Used by the overlay "Snooze" button.
+#[tauri::command]
+pub fn snooze_reminder(
+    state: State<'_, DbState>,
+    id: i64,
+    minutes: i64,
+) -> CommandResult<Reminder> {
+    if !(1..=1440).contains(&minutes) {
+        return Err(CommandError::InvalidInput(
+            "snooze minutes must be between 1 and 1440 (24h)".into(),
+        ));
+    }
+
+    let conn = state.lock();
+    let now = Local::now().naive_local();
+    let until = now + Duration::minutes(minutes);
+
+    let updated = conn.execute(
+        "UPDATE reminders SET snooze_until = ?1, updated_at = ?2 WHERE id = ?3",
+        params![until, now, id],
+    )?;
+    if updated == 0 {
+        return Err(CommandError::NotFound(format!("reminder {id}")));
+    }
+
+    conn.execute(
+        "INSERT INTO reminder_history (reminder_id, triggered_at, action)
+         VALUES (?1, ?2, 'snoozed')",
+        params![id, now],
+    )?;
+
+    log::info!("snoozed reminder id={id} for {minutes}min (until {until})");
+
+    conn.query_row(
+        "SELECT * FROM reminders WHERE id = ?1",
+        params![id],
+        Reminder::from_row,
+    )
+    .map_err(CommandError::from)
+}
+
+// ─── Delete single ──────────────────────────────────────────────────────────
+
+/// Delete a single reminder by id. `reminder_history` rows for that id
+/// are removed via `ON DELETE CASCADE` from the schema.
+///
+/// Returns `CommandError::NotFound` if no row matched.
+#[tauri::command]
+pub fn delete_reminder(state: State<'_, DbState>, id: i64) -> CommandResult<()> {
+    let conn = state.lock();
+    let deleted = conn.execute("DELETE FROM reminders WHERE id = ?1", params![id])?;
+    if deleted == 0 {
+        return Err(CommandError::NotFound(format!("reminder {id}")));
+    }
+    log::info!("deleted reminder id={id}");
+    Ok(())
+}
+
+// ─── Toggle active ──────────────────────────────────────────────────────────
+
+/// Flip the `is_active` flag on a reminder. Does NOT touch `next_trigger`:
+/// if the user wants a fresh schedule they can edit the reminder. The
+/// scheduler naturally skips inactive rows, so toggling off is enough to
+/// pause; toggling on resumes from whatever next_trigger was last stored.
+///
+/// Returns the updated reminder so the frontend can refresh its row
+/// without a follow-up `list_reminders` call.
+#[tauri::command]
+pub fn toggle_reminder_active(
+    state: State<'_, DbState>,
+    id: i64,
+) -> CommandResult<Reminder> {
+    let conn = state.lock();
+    let now = Local::now().naive_local();
+
+    let updated = conn.execute(
+        r#"
+        UPDATE reminders
+           SET is_active = NOT is_active,
+               updated_at = ?1
+         WHERE id = ?2
+        "#,
+        params![now, id],
+    )?;
+    if updated == 0 {
+        return Err(CommandError::NotFound(format!("reminder {id}")));
+    }
+    log::info!("toggled reminder id={id} active flag");
+
+    conn.query_row(
+        "SELECT * FROM reminders WHERE id = ?1",
+        params![id],
+        Reminder::from_row,
+    )
+    .map_err(CommandError::from)
+}
+
+// ─── Update ─────────────────────────────────────────────────────────────────
+
+/// Payload for `update_reminder`. Shape-identical to [`CreateReminderInput`]
+/// on purpose — the edit form reuses the create form verbatim, so the
+/// backend expects the same fields back. `id` is passed as a separate
+/// argument, not embedded in the body.
+///
+/// Server-managed fields (created_at, last_triggered, timestamps, cycles,
+/// phase) are NOT part of this payload. The backend preserves or recomputes
+/// them based on the kind transition rules documented below.
+#[derive(Debug, Deserialize)]
+pub struct UpdateReminderInput {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub intrusiveness: i64,
+    pub kind: ReminderKindInput,
+    #[serde(default)]
+    pub category: Option<Category>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub sound_file: Option<String>,
+    #[serde(default = "default_true")]
+    pub send_desktop: bool,
+    #[serde(default = "default_true")]
+    pub send_mobile: bool,
+}
+
+/// Update an existing reminder. The update is a full-body replace of all
+/// editable columns, NOT a partial patch — the frontend always sends the
+/// complete form state.
+///
+/// # Kind transition rules
+///
+/// - `created_at` is preserved. `updated_at` is set to now.
+/// - `last_triggered` is preserved (history is sacred).
+/// - `next_trigger` is recomputed from the new kind, exactly like
+///   `create_reminder` does.
+/// - For pomodoro: if the previous kind was ALSO pomodoro, `phase` and
+///   `cycles_completed` are preserved. If the kind changed from
+///   once/recurring to pomodoro, both reset (phase=Work, cycles=0).
+/// - Inactive reminders are not reactivated by an update. Use
+///   `toggle_reminder_active` for that.
+#[tauri::command]
+pub fn update_reminder(
+    state: State<'_, DbState>,
+    id: i64,
+    input: UpdateReminderInput,
+) -> CommandResult<Reminder> {
+    if input.title.trim().is_empty() {
+        return Err(CommandError::InvalidInput("title cannot be empty".into()));
+    }
+    if !(1..=5).contains(&input.intrusiveness) {
+        return Err(CommandError::InvalidInput(
+            "intrusiveness must be between 1 and 5".into(),
+        ));
+    }
+
+    let conn = state.lock();
+    let now = Local::now().naive_local();
+
+    // Load the existing row so we can preserve pomodoro state across
+    // same-kind edits and know whether the kind actually changed.
+    let existing: Reminder = conn
+        .query_row(
+            "SELECT * FROM reminders WHERE id = ?1",
+            params![id],
+            Reminder::from_row,
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                CommandError::NotFound(format!("reminder {id}"))
+            }
+            other => CommandError::Db(other),
+        })?;
+
+    let reminder_type = match &input.kind {
+        ReminderKindInput::Once { .. } => "once",
+        ReminderKindInput::Recurring { .. } => "recurring",
+        ReminderKindInput::Pomodoro { .. } => "pomodoro",
+    };
+
+    let (trigger_at, cron_expression, interval_minutes) = match &input.kind {
+        ReminderKindInput::Once { trigger_at } => (Some(*trigger_at), None, None),
+        ReminderKindInput::Recurring { rule } => match rule {
+            RecurrenceRule::Cron { expression } => (None, Some(expression.clone()), None),
+            RecurrenceRule::Interval { minutes } => (None, None, Some(*minutes)),
+        },
+        ReminderKindInput::Pomodoro { .. } => (None, None, None),
+    };
+
+    // Pomodoro state preservation: only keep phase/cycles if BOTH old and
+    // new kind are pomodoro. Any kind transition resets the state machine.
+    let (pomo_work, pomo_break, pomo_phase, pomo_cycles) = match &input.kind {
+        ReminderKindInput::Pomodoro {
+            work_minutes,
+            break_minutes,
+        } => {
+            let (preserved_phase, preserved_cycles) = match &existing.kind {
+                ReminderKind::Pomodoro {
+                    phase,
+                    cycles_completed,
+                    ..
+                } => (phase.as_str(), *cycles_completed),
+                _ => (PomodoroPhase::Work.as_str(), 0i64),
+            };
+            (
+                Some(*work_minutes),
+                Some(*break_minutes),
+                Some(preserved_phase),
+                Some(preserved_cycles),
+            )
+        }
+        _ => (None, None, None, None),
+    };
+
+    // next_trigger recomputation mirrors create_reminder. For pomodoro
+    // mid-cycle (phase == break), we use break_minutes instead of
+    // work_minutes so the edit doesn't break the user's current rhythm.
+    let next_trigger: Option<NaiveDateTime> = match &input.kind {
+        ReminderKindInput::Once { trigger_at } => Some(*trigger_at),
+        ReminderKindInput::Recurring { rule } => match rule {
+            RecurrenceRule::Interval { minutes } => Some(now + Duration::minutes(*minutes)),
+            RecurrenceRule::Cron { .. } => None,
+        },
+        ReminderKindInput::Pomodoro {
+            work_minutes,
+            break_minutes,
+        } => {
+            let minutes_for_next = match &existing.kind {
+                ReminderKind::Pomodoro {
+                    phase: PomodoroPhase::Break,
+                    ..
+                } => *break_minutes,
+                _ => *work_minutes,
+            };
+            Some(now + Duration::minutes(minutes_for_next))
+        }
+    };
+
+    let category = input.category.unwrap_or_default().as_str();
+    let color = input.color.as_deref().unwrap_or("#FF4444");
+    let sound_file = input.sound_file.as_deref().unwrap_or("default");
+
+    conn.execute(
+        r#"
+        UPDATE reminders SET
+            title = ?1,
+            description = ?2,
+            intrusiveness = ?3,
+            reminder_type = ?4,
+            trigger_at = ?5,
+            cron_expression = ?6,
+            interval_minutes = ?7,
+            next_trigger = ?8,
+            send_mobile = ?9,
+            send_desktop = ?10,
+            sound_file = ?11,
+            color = ?12,
+            category = ?13,
+            pomodoro_work_minutes = ?14,
+            pomodoro_break_minutes = ?15,
+            pomodoro_phase = ?16,
+            pomodoro_cycles_completed = ?17,
+            updated_at = ?18
+        WHERE id = ?19
+        "#,
+        params![
+            input.title.trim(),
+            input.description,
+            input.intrusiveness,
+            reminder_type,
+            trigger_at,
+            cron_expression,
+            interval_minutes,
+            next_trigger,
+            input.send_mobile,
+            input.send_desktop,
+            sound_file,
+            color,
+            category,
+            pomo_work,
+            pomo_break,
+            pomo_phase,
+            pomo_cycles,
+            now,
+            id,
+        ],
+    )?;
+
+    log::info!("updated reminder id={id} type={reminder_type}");
+
+    conn.query_row(
+        "SELECT * FROM reminders WHERE id = ?1",
+        params![id],
         Reminder::from_row,
     )
     .map_err(CommandError::from)

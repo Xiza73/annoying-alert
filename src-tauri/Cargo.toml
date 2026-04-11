@@ -47,3 +47,22 @@ anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
 
+# Synchronous HTTP client for ntfy.sh pushes. `ureq` is intentionally
+# blocking — a perfect match for our sync scheduler thread. `reqwest`
+# would drag in tokio for zero benefit here. Default features include
+# rustls-based HTTPS, which ntfy.sh needs.
+ureq = "2"
+
+# Base64 for encoding audio bytes into data: URLs consumable by
+# the webview's <audio> element. The frontend reads the picked file
+# via the browser's FileReader API (standard HTML input) and ships
+# the bytes to Rust as base64, which we decode, hash, and persist
+# under the app data dir. Playback reads it back the same way.
+# ~30kB overhead per short sound, negligible.
+base64 = "0.22"
+
+# Stable filename hash (SHA-256) for uploaded sounds. Content-addressed
+# storage means re-uploading the same file is free and the filename is
+# deterministic for testing.
+sha2 = "0.10"
+

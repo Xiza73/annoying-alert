@@ -27,6 +27,8 @@ use chrono::NaiveDateTime;
 use rusqlite::Row;
 use serde::{Deserialize, Serialize};
 
+use crate::models::category::Category;
+
 // ─── Sub-types ──────────────────────────────────────────────────────────────
 
 /// Pomodoro phase. The reminder alternates between `Work` and `Break` on
@@ -126,7 +128,10 @@ pub struct Reminder {
     pub color: String,
 
     // ── Metadata ───────────────────────────────────────────────────────────
-    pub category: String,
+    /// Closed enum of reminder domains (health/work/study/…). Stored
+    /// as snake_case TEXT in SQLite, parsed leniently on load so
+    /// legacy rows with unknown values fall back to `General`.
+    pub category: Category,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -210,7 +215,9 @@ impl Reminder {
             send_desktop: row.get("send_desktop")?,
             sound_file: row.get("sound_file")?,
             color: row.get("color")?,
-            category: row.get("category")?,
+            category: row
+                .get::<_, String>("category")
+                .map(|s| Category::from_sql(&s))?,
             created_at: row.get("created_at")?,
             updated_at: row.get("updated_at")?,
         })
@@ -297,7 +304,7 @@ mod tests {
             send_desktop: true,
             sound_file: "default".into(),
             color: "#FF4444".into(),
-            category: "general".into(),
+            category: Category::General,
             created_at: NaiveDateTime::parse_from_str(
                 "2026-04-10 10:00:00",
                 "%Y-%m-%d %H:%M:%S",

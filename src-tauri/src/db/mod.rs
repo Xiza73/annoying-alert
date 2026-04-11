@@ -26,6 +26,7 @@
 //! - `foreign_keys = ON` — SQLite does NOT enforce FKs by default; we must
 //!   turn them on per-connection.
 
+pub mod config;
 pub mod migrations;
 pub mod schema;
 
