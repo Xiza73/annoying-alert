@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Clock, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   getConfig,
@@ -171,53 +171,6 @@ export function Overlay({
     return () => window.clearInterval(handle);
   }, [level]);
 
-  // ── Ref mirror for lockdownRemaining ──────────────────────────────────────
-  //
-  // The close-request handler below is registered once (on level change)
-  // and must read the *current* lockdown value without re-registering.
-  // A ref lets the async listener always see the latest value without
-  // being in the effect's dep array.
-  const lockdownRemainingRef = useRef(lockdownRemaining);
-  useEffect(() => {
-    lockdownRemainingRef.current = lockdownRemaining;
-  }, [lockdownRemaining]);
-
-  // ── Close-request interception for L5 ──────────────────────────────────
-  //
-  // On L5, Alt+F4 and any other close path must be blocked while the
-  // lockdown timer is still running. We listen on the Tauri window's
-  // close-requested event and preventDefault while locked.
-  //
-  // Registered once per level change (NOT per lockdownRemaining tick) —
-  // the handler reads lockdownRemainingRef.current to get the live value.
-  // The `cancelled` flag guards the async race: if cleanup runs before the
-  // Promise resolves, we immediately call the returned unlisten fn so no
-  // orphaned listeners accumulate.
-  useEffect(() => {
-    if (level !== 5) return;
-
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-
-    getCurrentWebviewWindow()
-      .onCloseRequested((event) => {
-        if (lockdownRemainingRef.current > 0) {
-          event.preventDefault();
-        }
-      })
-      .then((fn) => {
-        if (cancelled) fn();
-        else unlisten = fn;
-      })
-      .catch((err: unknown) => {
-        console.warn("overlay: failed to attach close interceptor", err);
-      });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [level]);
 
   if (error) {
     return (
