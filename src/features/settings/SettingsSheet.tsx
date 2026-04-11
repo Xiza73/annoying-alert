@@ -18,10 +18,15 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
-import { Save } from "lucide-react";
+import { Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { getConfig, setConfig } from "@/features/reminders/api";
+import {
+  cleanupUnusedSounds,
+  getConfig,
+  setConfig,
+  type SweepReport,
+} from "@/features/reminders/api";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/label";
@@ -75,6 +80,17 @@ function isValidHhmm(s: string): boolean {
   return /^([01]?\d|2[0-3]):[0-5]\d$/.test(s.trim());
 }
 
+/**
+ * Humanize a byte count for the sound cleanup report. We only show
+ * one fractional digit and cap at MB — sound files are tiny and the
+ * sweep is rare, so more precision is noise.
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function SettingsSheet({
   open,
   onOpenChange,
@@ -86,6 +102,25 @@ export function SettingsSheet({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  // Cleanup sweep state. Lives outside `values` because it's a one-shot
+  // action (not a field to persist) and we want to show the report
+  // inline without triggering the "saved ✓" banner.
+  const [sweeping, setSweeping] = useState(false);
+  const [lastSweep, setLastSweep] = useState<SweepReport | null>(null);
+
+  async function handleCleanupSounds() {
+    setSweeping(true);
+    setError(null);
+    try {
+      const report = await cleanupUnusedSounds();
+      setLastSweep(report);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSweeping(false);
+    }
+  }
 
   // Load every time the sheet opens, not once on mount — the user may
   // have edited config elsewhere (future tray menu, etc.) while this
@@ -312,6 +347,42 @@ export function SettingsSheet({
                 setValues((v) => ({ ...v, startMinimized: checked }))
               }
             />
+          </div>
+        </section>
+
+        {/* ── Sounds cleanup ──────────────────────────────────────── */}
+        <section className="flex flex-col gap-3">
+          <div>
+            <h3 className="font-heading text-lg">Sonidos guardados</h3>
+            <p className="text-xs text-muted-foreground">
+              Los audios personalizados se guardan en tu carpeta de datos
+              local con un nombre basado en el hash del contenido. Al
+              borrar un recordatorio, los huérfanos se limpian solos.
+              Este botón fuerza una pasada manual.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleCleanupSounds}
+              disabled={sweeping || loading}
+            >
+              <Trash2 className="mr-2 size-4" />
+              {sweeping ? "Limpiando..." : "Limpiar sonidos no usados"}
+            </Button>
+            {lastSweep && (
+              <p className="text-xs text-muted-foreground">
+                {lastSweep.removed === 0
+                  ? `Sin huérfanos (${lastSweep.scanned} archivo${
+                      lastSweep.scanned === 1 ? "" : "s"
+                    } revisado${lastSweep.scanned === 1 ? "" : "s"}).`
+                  : `Borrados ${lastSweep.removed} archivo${
+                      lastSweep.removed === 1 ? "" : "s"
+                    } · ${formatBytes(lastSweep.bytes_freed)} liberados.`}
+              </p>
+            )}
           </div>
         </section>
 

@@ -117,3 +117,43 @@ export async function saveSoundFile(
 export async function getSoundDataUrl(filename: string): Promise<string> {
   return invoke<string>("get_sound_data_url", { filename });
 }
+
+/**
+ * Metadata for a sound already persisted under the app data dir.
+ * Returned by {@link listSavedSounds} so the ReminderForm can render
+ * a gallery picker without re-uploading files.
+ */
+export interface SavedSoundMeta {
+  filename: string;
+  bytes: number;
+  /** How many reminders currently point at this file. */
+  references: number;
+}
+
+/**
+ * List every saved sound file with its reference count. Sorted
+ * most-referenced first, then alphabetically.
+ */
+export async function listSavedSounds(): Promise<SavedSoundMeta[]> {
+  return invoke<SavedSoundMeta[]>("list_saved_sounds");
+}
+
+/**
+ * Report from {@link cleanupUnusedSounds}: how many files were
+ * inspected, how many were deleted, and how many bytes were reclaimed.
+ */
+export interface SweepReport {
+  scanned: number;
+  removed: number;
+  bytes_freed: number;
+}
+
+/**
+ * Run a manual orphan sweep: delete every sound file under the app
+ * data dir that no reminder currently references. Auto-sweep also
+ * runs after every reminder delete, but this is the "free me X MB
+ * right now" button for the SettingsSheet.
+ */
+export async function cleanupUnusedSounds(): Promise<SweepReport> {
+  return invoke<SweepReport>("cleanup_unused_sounds");
+}

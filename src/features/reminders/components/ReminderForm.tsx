@@ -21,11 +21,15 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Clock, Music, Repeat, Timer, Upload, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { Clock, Music, Repeat, Timer, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
-import { saveSoundFile } from "@/features/reminders/api";
+import {
+  listSavedSounds,
+  type SavedSoundMeta,
+  saveSoundFile,
+} from "@/features/reminders/api";
 import { CATEGORIES } from "@/features/reminders/categories";
 import {
   defaultFormValues,
@@ -113,12 +117,33 @@ export function ReminderForm({
   const sendMobile = useWatch({ control, name: "send_mobile" }) ?? true;
   const soundFile = useWatch({ control, name: "sound_file" }) ?? "default";
 
-  // Sound picker state. Kept local — we only need it for the "uploading"
-  // spinner and inline error. Refs the hidden <input type="file"> so the
-  // visible button can act as a trigger.
+  // Sound picker state.
+  //
+  // `savedSounds` is the gallery of audio files already persisted under
+  // the app data dir, loaded once on mount. After a successful upload
+  // we refetch so the just-added sound shows up in the Select without
+  // a reload. `soundUploading` drives the spinner; `soundError` is
+  // shown inline under the picker.
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [savedSounds, setSavedSounds] = useState<SavedSoundMeta[]>([]);
   const [soundUploading, setSoundUploading] = useState(false);
   const [soundError, setSoundError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listSavedSounds()
+      .then((list) => {
+        if (!cancelled) setSavedSounds(list);
+      })
+      .catch((err: unknown) => {
+        // Non-fatal: the user can still upload new sounds even if the
+        // gallery fails to load. Just log so we notice in dev.
+        console.error("listSavedSounds failed", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSoundFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -160,6 +185,14 @@ export function ReminderForm({
 
       const saved = await saveSoundFile(file.name, base64);
       setValue("sound_file", saved.filename, { shouldValidate: true });
+      // Refetch so the gallery picks up the new file (or bumps its
+      // reference count if the same bytes were re-uploaded).
+      try {
+        const list = await listSavedSounds();
+        setSavedSounds(list);
+      } catch (err) {
+        console.error("listSavedSounds refetch failed", err);
+      }
     } catch (err) {
       console.error("sound upload failed", err);
       setSoundError(
@@ -170,13 +203,19 @@ export function ReminderForm({
     }
   }
 
-  function clearSound() {
-    setSoundError(null);
-    setValue("sound_file", "default", { shouldValidate: true });
+  /**
+   * Shorten a 64-char hex hash to something readable like `a3f4…9e2c.mp3`
+   * so the Select doesn't get absurdly wide. Non-hash filenames (e.g.
+   * if a user sideloads one) pass through unchanged.
+   */
+  function shortLabel(filename: string): string {
+    const dot = filename.lastIndexOf(".");
+    if (dot <= 0) return filename;
+    const stem = filename.slice(0, dot);
+    const ext = filename.slice(dot);
+    if (stem.length <= 12) return filename;
+    return `${stem.slice(0, 4)}…${stem.slice(-4)}${ext}`;
   }
-
-  const hasCustomSound =
-    soundFile.length > 0 && soundFile !== "default";
 
   async function submit(data: ReminderFormInput) {
     // Resolver has already validated, but we still need to run the
@@ -423,41 +462,59 @@ export function ReminderForm({
 
       {/* ── Sound picker ──────────────────────────────────────────────────── */}
       <div className="space-y-2">
-        <Label>Sonido</Label>
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-card/50 p-2 pl-3">
-          <Music className="size-4 shrink-0 text-muted-foreground" />
-          <span
-            className="flex-1 truncate text-sm"
-            title={hasCustomSound ? soundFile : undefined}
-          >
-            {hasCustomSound ? soundFile : "Sonido por defecto (beep sintético)"}
-          </span>
-          {hasCustomSound && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={clearSound}
-              disabled={soundUploading}
-              aria-label="Usar sonido por defecto"
-            >
-              <X className="size-4" />
-            </Button>
-          )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => fileInputRef.current?.click()}
+        <Label htmlFor="sound_file">Sonido</Label>
+        <div className="flex items-center gap-2">
+          <Select
+            value={soundFile}
+            onValueChange={(v) => {
+              // Orphan Select values can't directly trigger side
+              // effects, so we hijack the sentinel `__upload__` option
+              // to open the native file picker and leave the form
+              // value unchanged. The handler will update it when the
+              // upload completes.
+              if (v === "__upload__") {
+                fileInputRef.current?.click();
+                return;
+              }
+              setSoundError(null);
+              setValue("sound_file", v, { shouldValidate: true });
+            }}
             disabled={soundUploading}
           >
-            <Upload className="size-4" />
-            {soundUploading ? "Subiendo..." : "Elegir"}
-          </Button>
+            <SelectTrigger id="sound_file" className="flex-1">
+              <span className="flex items-center gap-2">
+                <Music className="size-4 text-muted-foreground" />
+                <SelectValue />
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">
+                Sonido por defecto (beep sintético)
+              </SelectItem>
+              {savedSounds.map((s) => (
+                <SelectItem key={s.filename} value={s.filename}>
+                  <span className="flex items-center gap-2">
+                    <span>{shortLabel(s.filename)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      · {(s.bytes / 1024).toFixed(0)} KB
+                      {s.references > 0 && ` · usado ${s.references}×`}
+                    </span>
+                  </span>
+                </SelectItem>
+              ))}
+              <SelectItem value="__upload__">
+                <span className="flex items-center gap-2 text-primary">
+                  <Upload className="size-4" />
+                  Subir nuevo archivo…
+                </span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
           {/*
-            Hidden native file input. Using `accept="audio/*"` filters the
-            OS picker; the real extension validation happens in Rust
-            (save_sound_file → ALLOWED_EXTS).
+            Hidden native file input. Opened via the sentinel option
+            above. `accept="audio/*"` filters the OS picker; real
+            extension validation happens in Rust (save_sound_file →
+            ALLOWED_EXTS).
           */}
           <input
             ref={fileInputRef}
@@ -467,9 +524,10 @@ export function ReminderForm({
             onChange={handleSoundFile}
           />
         </div>
-        {soundError && (
-          <p className="text-xs text-destructive">{soundError}</p>
+        {soundUploading && (
+          <p className="text-xs text-muted-foreground">Subiendo sonido…</p>
         )}
+        {soundError && <p className="text-xs text-destructive">{soundError}</p>}
       </div>
 
       {/* ── Channels ──────────────────────────────────────────────────────── */}

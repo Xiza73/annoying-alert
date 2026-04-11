@@ -68,6 +68,8 @@ pub fn run() {
             commands::config::set_config,
             commands::sounds::save_sound_file,
             commands::sounds::get_sound_data_url,
+            commands::sounds::list_saved_sounds,
+            commands::sounds::cleanup_unused_sounds,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
