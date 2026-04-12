@@ -72,9 +72,13 @@ export function ReminderCard({
           <KindIcon kind={reminder.kind.type} />
           <span>{kindLabel}</span>
         </div>
-        <span className="font-mono text-xs text-muted-foreground">
-          {relative}
-        </span>
+        {reminder.is_active ? (
+          <span className="font-mono text-xs text-muted-foreground">
+            {relative}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground/60">Pausada</span>
+        )}
       </div>
 
       {/* Actions */}

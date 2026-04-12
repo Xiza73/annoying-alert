@@ -9,7 +9,6 @@ use rusqlite::params;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
 
-use crate::commands::sounds::sweep_orphans;
 use crate::commands::{CommandError, CommandResult};
 use crate::db::DbState;
 use crate::models::{Category, PomodoroPhase, RecurrenceRule, Reminder, ReminderKind};
@@ -110,19 +109,12 @@ pub fn get_reminder(state: State<'_, DbState>, id: i64) -> CommandResult<Reminde
 /// rows are removed via `ON DELETE CASCADE` declared in the schema.
 #[tauri::command]
 pub fn delete_all_reminders(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, DbState>,
 ) -> CommandResult<usize> {
     let conn = state.lock();
     let deleted = conn.execute("DELETE FROM reminders", [])?;
     log::warn!("delete_all_reminders: removed {deleted} row(s)");
-
-    // Best-effort orphan sweep. Wiping every reminder means every
-    // custom sound is now unreferenced, so this is the one place
-    // where we're guaranteed to reclaim space.
-    if let Err(err) = sweep_orphans(&app, &conn) {
-        log::warn!("orphan sweep after delete_all: {err}");
-    }
 
     Ok(deleted)
 }
@@ -306,7 +298,7 @@ pub fn snooze_reminder(
 /// Returns `CommandError::NotFound` if no row matched.
 #[tauri::command]
 pub fn delete_reminder(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, DbState>,
     id: i64,
 ) -> CommandResult<()> {
@@ -316,13 +308,6 @@ pub fn delete_reminder(
         return Err(CommandError::NotFound(format!("reminder {id}")));
     }
     log::info!("deleted reminder id={id}");
-
-    // Best-effort orphan sweep: the reminder we just deleted may
-    // have been the last one referencing its sound. Silent on
-    // failure so the delete still reports success to the UI.
-    if let Err(err) = sweep_orphans(&app, &conn) {
-        log::warn!("orphan sweep after delete id={id}: {err}");
-    }
 
     Ok(())
 }
