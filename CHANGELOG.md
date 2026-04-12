@@ -39,3 +39,5 @@ built with Tauri v2 + React 19 that uses intrusive, escalating overlays
 - Stale `snooze_until` no longer blocks reminders after edit or fire
 - Level 5 fullscreen overlay dismiss now works reliably on Windows (WebView2 fullscreen workaround)
 - Stale `onCloseRequested` listeners no longer accumulate on L5 overlays
+- Custom sounds now persist after their associated reminders are deleted
+- Paused reminders show "Pausada" instead of stale relative time
