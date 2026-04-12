@@ -13,6 +13,7 @@ use crate::commands::sounds::sweep_orphans;
 use crate::commands::{CommandError, CommandResult};
 use crate::db::DbState;
 use crate::models::{Category, PomodoroPhase, RecurrenceRule, Reminder, ReminderKind};
+use crate::notifier::overlay_label;
 use crate::scheduler::next_trigger::compute_after_resume;
 
 // ─── Input DTO ──────────────────────────────────────────────────────────────
@@ -407,7 +408,7 @@ pub fn toggle_reminder_active(
     // Best-effort: close any overlay window still open for this
     // reminder. On pause this kills the currently-ringing alarm; on
     // resume it's a safety net against zombie windows.
-    let label = format!("overlay-{id}");
+    let label = overlay_label(id);
     if let Some(window) = app.get_webview_window(&label) {
         if let Err(err) = window.close() {
             log::warn!("failed to close overlay window {label}: {err}");

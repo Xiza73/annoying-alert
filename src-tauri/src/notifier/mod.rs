@@ -17,6 +17,8 @@
 mod ntfy;
 mod overlay;
 
+pub use overlay::overlay_label;
+
 use rusqlite::Connection;
 use tauri::AppHandle;
 

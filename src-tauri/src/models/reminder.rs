@@ -45,7 +45,7 @@ impl PomodoroPhase {
     /// Parse the TEXT column value stored by SQLite. Any unknown string
     /// defaults to `Work` — this matches the Python schema default and is
     /// the safer fallback (a stray bad value doesn't lose the reminder).
-    fn from_sql(s: &str) -> Self {
+    pub fn from_sql(s: &str) -> Self {
         match s {
             "break" => Self::Break,
             _ => Self::Work,

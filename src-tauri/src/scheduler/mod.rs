@@ -44,7 +44,7 @@ use rusqlite::{params, Connection};
 use tauri::{AppHandle, Emitter};
 
 use crate::db::resolve_db_path;
-use crate::models::Reminder;
+use crate::models::{PomodoroPhase, Reminder, ReminderKind};
 use crate::notifier;
 use crate::scheduler::next_trigger::{compute_after_fire, AfterFire};
 use crate::scheduler::quiet_hours::{is_within_quiet_hours, QuietHoursConfig};
@@ -220,16 +220,25 @@ fn fire(
     )
     .context("inserting history row")?;
 
-    // Re-read the row so the frontend gets the fresh state (new
-    // next_trigger, swapped pomodoro phase, bumped cycle count). Cheaper
-    // and less bug-prone than mutating a copy in memory.
-    let updated: Reminder = conn
-        .query_row(
-            "SELECT * FROM reminders WHERE id = ?1",
-            params![reminder.id],
-            Reminder::from_row,
-        )
-        .context("reloading updated reminder")?;
+    // Build the updated reminder in memory — we already know every field
+    // that the UPDATE touched, so a second DB round-trip is unnecessary.
+    let updated = {
+        let mut r = reminder.clone();
+        r.last_triggered = Some(now);
+        r.next_trigger = next_trigger;
+        r.is_active = is_active;
+        r.snooze_until = None;
+        // Apply pomodoro phase/cycles only when the kind is actually Pomodoro
+        // and compute_after_fire produced new values (Some). Non-pomodoro
+        // kinds leave these as None so we skip them entirely.
+        if let (ReminderKind::Pomodoro { phase, cycles_completed, .. }, Some(phase_str), Some(cycles)) =
+            (&mut r.kind, pomodoro_phase_sql, pomodoro_cycles)
+        {
+            *phase = PomodoroPhase::from_sql(phase_str);
+            *cycles_completed = cycles;
+        }
+        r
+    };
 
     // Fire-and-forget: if the webview is gone (window closed), `emit` errors
     // but we don't want to crash the scheduler over it. Log and continue.

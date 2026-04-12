@@ -46,6 +46,14 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::models::Reminder;
 
+/// Build the window label for an overlay window given a reminder id.
+///
+/// Central point for `"overlay-{id}"` — keeps the label format consistent
+/// across the notifier, the overlay command, and any toggle/close code.
+pub fn overlay_label(reminder_id: i64) -> String {
+    format!("overlay-{reminder_id}")
+}
+
 /// Geometry + window flags derived from an intrusiveness level.
 ///
 /// A plain struct so it's trivial to test: the scaling logic is pure
@@ -128,7 +136,7 @@ pub fn show(app: &AppHandle, reminder: &Reminder) -> Result<()> {
     // a row (e.g. a pomodoro cycle) and the previous overlay is still
     // open, Tauri's builder will return an error because labels must be
     // unique. We check for an existing window first and just refocus it.
-    let label = format!("overlay-{}", reminder.id);
+    let label = overlay_label(reminder.id);
 
     if let Some(existing) = app.get_webview_window(&label) {
         log::debug!("overlay: window {label} already exists, refocusing");

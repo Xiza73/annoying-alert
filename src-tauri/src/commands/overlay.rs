@@ -7,6 +7,7 @@
 use tauri::{AppHandle, Manager};
 
 use crate::commands::{CommandError, CommandResult};
+use crate::notifier::overlay_label;
 
 /// Dismiss (destroy) an overlay window from the Rust side.
 ///
@@ -23,11 +24,11 @@ use crate::commands::{CommandError, CommandResult};
 /// Returns `Ok(())` if the window is already gone (idempotent).
 #[tauri::command]
 pub fn dismiss_overlay(app: AppHandle, reminder_id: i64) -> CommandResult<()> {
-    let label = format!("overlay-{reminder_id}");
+    let label = overlay_label(reminder_id);
 
     let Some(window) = app.get_webview_window(&label) else {
         log::warn!("dismiss_overlay: window {label} not found");
-        return Ok(()); // idempotente: no es error si ya cerró
+        return Ok(()); // idempotent: not an error if already closed
     };
 
     // Exit fullscreen first — WebView2 + fullscreen can ignore destroy/close
@@ -36,7 +37,6 @@ pub fn dismiss_overlay(app: AppHandle, reminder_id: i64) -> CommandResult<()> {
         // best-effort: continue trying to destroy
     }
 
-    // Give WebView2 a tick to process the fullscreen transition before destroy
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Use destroy() instead of close() — unconditional, no CloseRequested event,
