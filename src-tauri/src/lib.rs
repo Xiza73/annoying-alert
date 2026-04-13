@@ -9,7 +9,6 @@ pub mod tray;
 
 /// Sample command kept from the Tauri scaffold. Used by the bootstrap
 /// smoke test in `src/app/App.tsx` to confirm the IPC bridge is wired up.
-/// Will be removed once real reminder commands land in Fase 2.4.
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {name}! You've been greeted from Rust!")

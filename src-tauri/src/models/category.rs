@@ -7,13 +7,13 @@
 //! with no validation, which meant typos ("helath") and inconsistent
 //! casing ("Work" vs "work") ended up scattered in the DB. An enum on
 //! the Rust side forces the UI to pick from a finite set, so the
-//! filter/group features we want later (Fase 3.7+) work cleanly.
+//! filter/group features we may want later work cleanly.
 //!
 //! # DB storage
 //!
 //! The column stays `TEXT` on the SQLite side (no migration needed —
-//! this matters for Fase 8's Python → Rust migration, which has to
-//! accept whatever categories existed in the old DB). Unknown strings
+//! the loader must accept whatever categories existed in any old DB).
+//! Unknown strings
 //! fall back to [`Category::General`] in [`Category::from_sql`] so
 //! legacy data never crashes the loader.
 //!

@@ -34,10 +34,9 @@ pub struct AfterFire {
 ///   won't fire again.
 /// - `Recurring Interval` → next_trigger = now + interval_minutes.
 ///   Stays active forever until the user deactivates it.
-/// - `Recurring Cron` → NOT YET IMPLEMENTED (Fase 4.5). For now we
-///   leave `next_trigger = None` and log a warning. Reminder stays
-///   active but dormant. No data loss; enabling it later is a one-line
-///   change.
+/// - `Recurring Cron` → NOT YET IMPLEMENTED. For now we leave
+///   `next_trigger = None` and log a warning. Reminder stays active
+///   but dormant. No data loss; enabling it later is a one-line change.
 /// - `Pomodoro Work` → transition to Break, next_trigger = now +
 ///   break_minutes. Cycles unchanged.
 /// - `Pomodoro Break` → transition to Work, next_trigger = now +

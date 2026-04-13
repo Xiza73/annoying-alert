@@ -6,7 +6,7 @@
 //! sidestep them entirely: every fired reminder gets its own dedicated
 //! webview window, created from Rust via [`tauri::WebviewWindowBuilder`].
 //!
-//! # Intrusiveness scaling (Fase 5.5.1)
+//! # Intrusiveness scaling
 //!
 //! The window geometry, placement, and focus behavior all scale with
 //! `reminder.intrusiveness` (1..5). See [`OverlayConfig::for_level`] for
@@ -295,7 +295,7 @@ mod tests {
         assert!(cfg.focused);
         assert!(!cfg.fullscreen);
         // Baseline must match the pre-scaling dimensions so existing
-        // reminders don't jump when Fase 5.5.1 ships.
+        // reminders don't jump if geometry changes.
         assert_eq!(cfg.width, 640.0);
         assert_eq!(cfg.height, 420.0);
     }

@@ -170,7 +170,7 @@ pub fn create_reminder(
     };
 
     // Initial next_trigger computation. For `cron` recurring we leave it
-    // None until a cron parser module lands in Fase 5.
+    // None — cron parsing is not yet implemented (TODO).
     let next_trigger: Option<NaiveDateTime> = match &input.kind {
         ReminderKindInput::Once { trigger_at } => Some(*trigger_at),
         ReminderKindInput::Recurring { rule } => match rule {
