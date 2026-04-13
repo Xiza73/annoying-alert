@@ -72,4 +72,5 @@ base64 = "0.22"
 # deterministic for testing.
 sha2 = "0.10"
 tauri-plugin-single-instance = "2.4.1"
+croner = "3.0.1"
 

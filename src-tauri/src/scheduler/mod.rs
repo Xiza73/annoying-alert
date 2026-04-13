@@ -32,6 +32,7 @@
 //! ever need graceful shutdown (e.g. to flush pending writes), we can add
 //! an `AtomicBool` stop flag.
 
+pub mod cron_parser;
 pub mod next_trigger;
 pub mod quiet_hours;
 

@@ -13,6 +13,7 @@ use crate::commands::{CommandError, CommandResult};
 use crate::db::DbState;
 use crate::models::{Category, PomodoroPhase, RecurrenceRule, Reminder, ReminderKind};
 use crate::notifier::overlay_label;
+use crate::scheduler::cron_parser;
 use crate::scheduler::next_trigger::compute_after_resume;
 
 // ─── Input DTO ──────────────────────────────────────────────────────────────
@@ -135,6 +136,14 @@ pub fn create_reminder(
         ));
     }
 
+    // Validate cron expression before touching the DB.
+    if let ReminderKindInput::Recurring {
+        rule: RecurrenceRule::Cron { expression },
+    } = &input.kind
+    {
+        cron_parser::validate_cron(expression).map_err(CommandError::InvalidInput)?;
+    }
+
     let conn = state.lock();
     let now = Local::now().naive_local();
 
@@ -169,15 +178,16 @@ pub fn create_reminder(
         _ => (None, None, None, None),
     };
 
-    // Initial next_trigger computation. For `cron` recurring we leave it
-    // None — cron parsing is not yet implemented (TODO).
+    // Initial next_trigger computation.
     let next_trigger: Option<NaiveDateTime> = match &input.kind {
         ReminderKindInput::Once { trigger_at } => Some(*trigger_at),
         ReminderKindInput::Recurring { rule } => match rule {
             RecurrenceRule::Interval { minutes } => {
                 Some(now + Duration::minutes(*minutes))
             }
-            RecurrenceRule::Cron { .. } => None,
+            RecurrenceRule::Cron { expression } => {
+                cron_parser::next_from_cron(expression, now)
+            }
         },
         ReminderKindInput::Pomodoro { work_minutes, .. } => {
             Some(now + Duration::minutes(*work_minutes))
@@ -534,6 +544,14 @@ pub fn update_reminder(
         _ => (None, None, None, None),
     };
 
+    // Validate cron expression before touching the DB.
+    if let ReminderKindInput::Recurring {
+        rule: RecurrenceRule::Cron { expression },
+    } = &input.kind
+    {
+        cron_parser::validate_cron(expression).map_err(CommandError::InvalidInput)?;
+    }
+
     // next_trigger recomputation mirrors create_reminder. For pomodoro
     // mid-cycle (phase == break), we use break_minutes instead of
     // work_minutes so the edit doesn't break the user's current rhythm.
@@ -541,7 +559,9 @@ pub fn update_reminder(
         ReminderKindInput::Once { trigger_at } => Some(*trigger_at),
         ReminderKindInput::Recurring { rule } => match rule {
             RecurrenceRule::Interval { minutes } => Some(now + Duration::minutes(*minutes)),
-            RecurrenceRule::Cron { .. } => None,
+            RecurrenceRule::Cron { expression } => {
+                cron_parser::next_from_cron(expression, now)
+            }
         },
         ReminderKindInput::Pomodoro {
             work_minutes,

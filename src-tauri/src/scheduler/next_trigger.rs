@@ -12,6 +12,7 @@
 use chrono::{Duration, NaiveDateTime};
 
 use crate::models::{PomodoroPhase, RecurrenceRule, Reminder, ReminderKind};
+use super::cron_parser;
 
 /// The post-fire state of a reminder. Maps 1:1 to the SQL columns that
 /// the scheduler updates after firing.
@@ -58,12 +59,15 @@ pub fn compute_after_fire(reminder: &Reminder, now: NaiveDateTime) -> AfterFire 
                 pomodoro_cycles: None,
             },
             RecurrenceRule::Cron { expression } => {
-                log::warn!(
-                    "cron reminders are not yet scheduled (id={}, expr={expression:?})",
-                    reminder.id,
-                );
+                let next = cron_parser::next_from_cron(expression, now);
+                if next.is_none() {
+                    log::warn!(
+                        "cron: no next occurrence for id={}, expr={expression:?}",
+                        reminder.id,
+                    );
+                }
                 AfterFire {
-                    next_trigger: None,
+                    next_trigger: next,
                     is_active: true,
                     pomodoro_phase_sql: None,
                     pomodoro_cycles: None,
@@ -140,7 +144,7 @@ pub fn compute_after_resume(
             RecurrenceRule::Interval { minutes } => {
                 Some(now + Duration::minutes(*minutes))
             }
-            RecurrenceRule::Cron { .. } => None,
+            RecurrenceRule::Cron { expression } => cron_parser::next_from_cron(expression, now),
         },
         ReminderKind::Pomodoro {
             work_minutes,
@@ -225,13 +229,28 @@ mod tests {
     }
 
     #[test]
-    fn cron_stays_active_but_dormant() {
+    fn cron_after_fire_computes_next() {
+        // "every day at 09:00" — fired at exactly 09:00, next should be tomorrow
         let r = reminder_with(ReminderKind::Recurring {
             rule: RecurrenceRule::Cron {
-                expression: "0 9 * * 1-5".into(),
+                expression: "0 9 * * *".into(),
             },
         });
-        let after = compute_after_fire(&r, at("2026-04-10 10:00:00"));
+        let now = at("2026-04-10 09:00:00");
+        let after = compute_after_fire(&r, now);
+        assert_eq!(after.next_trigger, Some(at("2026-04-11 09:00:00")));
+        assert!(after.is_active);
+    }
+
+    #[test]
+    fn cron_invalid_expression_returns_none() {
+        let r = reminder_with(ReminderKind::Recurring {
+            rule: RecurrenceRule::Cron {
+                expression: "not a cron".into(),
+            },
+        });
+        let now = at("2026-04-10 09:00:00");
+        let after = compute_after_fire(&r, now);
         assert_eq!(after.next_trigger, None);
         assert!(after.is_active);
     }
@@ -302,14 +321,18 @@ mod tests {
     }
 
     #[test]
-    fn resume_cron_stays_dormant() {
+    fn resume_cron_computes_next() {
+        // "every weekday at 09:00" — resume on Wednesday at 10:00
+        // → next should be Thursday 09:00
         let r = reminder_with(ReminderKind::Recurring {
             rule: RecurrenceRule::Cron {
                 expression: "0 9 * * 1-5".into(),
             },
         });
-        let next = compute_after_resume(&r, at("2026-04-10 10:00:00"));
-        assert_eq!(next, None);
+        // 2026-04-08 is a Wednesday
+        let now = at("2026-04-08 10:00:00");
+        let next = compute_after_resume(&r, now);
+        assert_eq!(next, Some(at("2026-04-09 09:00:00"))); // Thursday
     }
 
     #[test]
