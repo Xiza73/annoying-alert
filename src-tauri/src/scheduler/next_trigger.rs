@@ -114,10 +114,10 @@ pub fn compute_after_fire(reminder: &Reminder, now: NaiveDateTime) -> AfterFire 
 ///
 /// # Behavior per kind
 ///
-/// - `Once`: `next_trigger` stays at the original `trigger_at`. If that
-///   instant has already passed the reminder fires on the next tick —
-///   the user asked to resume a missed one-shot alarm, so firing it is
-///   the expected "catch-up" behavior.
+/// - `Once`: if `trigger_at` is still in the future, preserve it.
+///   If it's already in the past the reminder has expired — return `None`
+///   so the caller can refuse to reactivate it (the user missed it while
+///   it was paused; silently firing a past-due one-shot would be confusing).
 /// - `Recurring Interval`: `next_trigger = now + interval_minutes`.
 /// - `Recurring Cron`: `None` (cron scheduling is unimplemented; the
 ///   scheduler already skips these).
@@ -130,7 +130,13 @@ pub fn compute_after_resume(
     now: NaiveDateTime,
 ) -> Option<NaiveDateTime> {
     match &reminder.kind {
-        ReminderKind::Once { trigger_at } => Some(*trigger_at),
+        ReminderKind::Once { trigger_at } => {
+            if *trigger_at > now {
+                Some(*trigger_at)
+            } else {
+                None // expired — toggle_reminder_active will deactivate
+            }
+        }
         ReminderKind::Recurring { rule } => match rule {
             RecurrenceRule::Interval { minutes } => {
                 Some(now + Duration::minutes(*minutes))
@@ -262,13 +268,22 @@ mod tests {
     }
 
     #[test]
-    fn resume_once_preserves_original_trigger_at() {
+    fn resume_once_expired_returns_none() {
         let r = reminder_with(ReminderKind::Once {
             trigger_at: at("2026-04-10 15:00:00"),
         });
+        // trigger_at is in the past → expired, should not reactivate
         let next = compute_after_resume(&r, at("2026-04-10 16:00:00"));
-        // One-shot: original trigger is sacred. Past-due fires on next
-        // tick as a "missed alarm" catch-up.
+        assert_eq!(next, None);
+    }
+
+    #[test]
+    fn resume_once_future_preserves_trigger() {
+        let r = reminder_with(ReminderKind::Once {
+            trigger_at: at("2026-04-10 15:00:00"),
+        });
+        // trigger_at is still in the future → preserve it
+        let next = compute_after_resume(&r, at("2026-04-10 14:00:00"));
         assert_eq!(next, Some(at("2026-04-10 15:00:00")));
     }
 

@@ -358,18 +358,26 @@ pub fn toggle_reminder_active(
             other => CommandError::from(other),
         })?;
 
-    let will_be_active = !current.is_active;
-
     // Resume path: rebase next_trigger so stale scheduling can't fire
-    // an immediate ghost alarm.
-    let new_next_trigger: Option<NaiveDateTime> = if will_be_active {
-        compute_after_resume(&current, now)
-    } else {
-        // Pause path: leave next_trigger as-is. The scheduler skips
-        // inactive rows anyway, and preserving the value lets
-        // `compute_after_resume` rebase against a known shape later.
-        current.next_trigger
-    };
+    // an immediate ghost alarm. For Once reminders whose trigger_at is
+    // already in the past, compute_after_resume returns None — that means
+    // the reminder expired while paused and must NOT be reactivated.
+    let (will_be_active, new_next_trigger): (bool, Option<NaiveDateTime>) =
+        if !current.is_active {
+            let next = compute_after_resume(&current, now);
+            match &current.kind {
+                ReminderKind::Once { .. } if next.is_none() => {
+                    // One-shot already expired — refuse to reactivate
+                    (false, None)
+                }
+                _ => (true, next),
+            }
+        } else {
+            // Pause path: leave next_trigger as-is. The scheduler skips
+            // inactive rows anyway, and preserving the value lets
+            // `compute_after_resume` rebase against a known shape later.
+            (false, current.next_trigger)
+        };
 
     conn.execute(
         r#"
