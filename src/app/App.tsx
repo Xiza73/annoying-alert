@@ -10,7 +10,7 @@
  */
 
 import { listen } from "@tauri-apps/api/event";
-import { BellRing, Plus, RefreshCcw, Settings, Trash2, X } from "lucide-react";
+import { BellRing, Plus, RefreshCcw, Search, Settings, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ReminderFormSheet } from "@/features/reminders/components/ReminderFormSheet";
@@ -21,12 +21,14 @@ import {
   reminderToFormValues,
 } from "@/features/reminders/schemas";
 import type {
+  Category,
   CreateReminderInput,
   Reminder,
 } from "@/features/reminders/types";
 import { SettingsSheet } from "@/features/settings/SettingsSheet";
 import { ConfirmDialog } from "@/shared/components/ConfirmDialog";
 import { Button } from "@/shared/components/ui/button";
+import { Input } from "@/shared/components/ui/input";
 import { Toaster } from "@/shared/components/ui/sonner";
 import { cn } from "@/shared/lib/utils";
 
@@ -65,6 +67,22 @@ function App() {
 
   const [sheet, setSheet] = useState<FormSheetState>(CLOSED_SHEET);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Derive unique categories present in the loaded reminders (compiler memoizes)
+  const uniqueCategories = [
+    ...new Set(reminders.map((r) => r.category)),
+  ] as Category[];
+
+  // Apply both filters in render — no useMemo needed (React Compiler handles it)
+  const filteredReminders = reminders.filter((r) => {
+    const matchesCategory = selectedCategory === null || r.category === selectedCategory;
+    const matchesSearch =
+      searchQuery === "" ||
+      r.title.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
 
   // Tray menu → settings bridge. The "Configuración…" item in the tray
   // fires this event (see src-tauri/src/tray.rs::OPEN_SETTINGS_EVENT).
@@ -121,8 +139,16 @@ function App() {
 
       {error && <ErrorBanner message={error} />}
 
+      <FilterBar
+        uniqueCategories={uniqueCategories}
+        selectedCategory={selectedCategory}
+        onSelectCategory={setSelectedCategory}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
+
       <RemindersList
-        reminders={reminders}
+        reminders={filteredReminders}
         disabled={loading}
         onToggle={toggleActive}
         onEdit={handleEditReminder}
@@ -257,6 +283,114 @@ function ErrorBanner({ message }: { message: string }) {
   return (
     <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
       {message}
+    </div>
+  );
+}
+
+// ─── FilterBar ───────────────────────────────────────────────────────────────
+
+const CATEGORY_LABELS: Record<Category, string> = {
+  general: "General",
+  health: "Salud",
+  work: "Trabajo",
+  study: "Estudio",
+  personal: "Personal",
+  fitness: "Fitness",
+  home: "Hogar",
+  finance: "Finanzas",
+};
+
+interface FilterBarProps {
+  uniqueCategories: Category[];
+  selectedCategory: Category | null;
+  onSelectCategory: (cat: Category | null) => void;
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
+}
+
+function FilterBar({
+  uniqueCategories,
+  selectedCategory,
+  onSelectCategory,
+  searchQuery,
+  onSearchChange,
+}: FilterBarProps) {
+  const hasCategories = uniqueCategories.length > 0;
+
+  if (!hasCategories && searchQuery === "") {
+    // Render the search bar alone — still useful even without categories
+    return (
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+        <Input
+          type="search"
+          placeholder="Buscar por título…"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="pl-8 text-sm"
+          aria-label="Buscar recordatorios"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* Search input */}
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+        <Input
+          type="search"
+          placeholder="Buscar por título…"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="pl-8 text-sm"
+          aria-label="Buscar recordatorios"
+        />
+      </div>
+
+      {/* Category chips — only shown when at least one reminder has a category */}
+      {hasCategories && (
+        <div
+          className="flex gap-1.5 overflow-x-auto pb-0.5"
+          role="group"
+          aria-label="Filtrar por categoría"
+        >
+          {/* "Todas" chip */}
+          <button
+            type="button"
+            onClick={() => onSelectCategory(null)}
+            aria-pressed={selectedCategory === null}
+            className={cn(
+              "shrink-0 rounded-full px-3 py-0.5 text-xs font-medium transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              selectedCategory === null
+                ? "bg-primary text-primary-foreground"
+                : "border border-border bg-transparent text-muted-foreground hover:border-primary/50 hover:text-foreground",
+            )}
+          >
+            Todas
+          </button>
+
+          {uniqueCategories.map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => onSelectCategory(cat)}
+              aria-pressed={selectedCategory === cat}
+              className={cn(
+                "shrink-0 rounded-full px-3 py-0.5 text-xs font-medium transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                selectedCategory === cat
+                  ? "bg-primary text-primary-foreground"
+                  : "border border-border bg-transparent text-muted-foreground hover:border-primary/50 hover:text-foreground",
+              )}
+            >
+              {CATEGORY_LABELS[cat]}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
