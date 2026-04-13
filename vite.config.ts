@@ -17,6 +17,37 @@ export default defineConfig(async () => ({
     },
   },
 
+  build: {
+    rollupOptions: {
+      output: {
+        /**
+         * Split heavy vendor libs into separate chunks so the main entry
+         * chunk stays well under the 500 kB warning limit.
+         *
+         * Groups:
+         *  - react-vendor  : React + React-DOM (runtime, rarely changes)
+         *  - radix         : all Radix UI primitives (large but tree-shaken at use-site)
+         *  - form          : react-hook-form + zod (form/validation stack)
+         *  - tauri         : @tauri-apps/* (IPC layer)
+         */
+        manualChunks(id: string) {
+          if (id.includes("node_modules/react/") || id.includes("node_modules/react-dom/")) {
+            return "react-vendor";
+          }
+          if (id.includes("node_modules/radix-ui/") || id.includes("node_modules/@radix-ui/")) {
+            return "radix";
+          }
+          if (id.includes("node_modules/react-hook-form/") || id.includes("node_modules/zod/") || id.includes("node_modules/@hookform/")) {
+            return "form";
+          }
+          if (id.includes("node_modules/@tauri-apps/")) {
+            return "tauri";
+          }
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

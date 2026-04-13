@@ -1,10 +1,11 @@
+// Entry point — never exports components, so fast-refresh rule does not apply.
+/* eslint-disable react-refresh/only-export-components */
 import "./index.css";
 
-import React from "react";
+import React, { Suspense } from "react";
 import ReactDOM from "react-dom/client";
 
 import App from "@/app/App";
-import { Overlay } from "@/features/reminders/overlay/Overlay";
 
 /**
  * Single Vite entry, two possible React trees.
@@ -19,7 +20,21 @@ import { Overlay } from "@/features/reminders/overlay/Overlay";
  *
  * No React Router, no separate HTML entry. One build, one bundle,
  * branching decided at boot time.
+ *
+ * The overlay module is code-split via React.lazy so it does not inflate
+ * the main app chunk — it is fetched on demand only when the overlay
+ * window actually boots.
  */
+
+// Dynamic import keeps the overlay + sound module out of the main chunk.
+// React.lazy requires a default export, so we re-shape the named export
+// via the promise chain rather than touching Overlay.tsx.
+const Overlay = React.lazy(() =>
+  import("@/features/reminders/overlay/Overlay").then((m) => ({
+    default: m.Overlay,
+  })),
+);
+
 const params = new URLSearchParams(window.location.search);
 const mode = params.get("mode");
 
@@ -52,7 +67,12 @@ if (mode === "overlay") {
   } else {
     root.render(
       <React.StrictMode>
-        <Overlay reminderId={reminderId} level={level} />
+        {/* Suspense fallback is null — the overlay chunk loads in <100ms
+            locally and a blank black screen is preferable to a flash of
+            any placeholder UI in a fullscreen takeover window. */}
+        <Suspense fallback={null}>
+          <Overlay reminderId={reminderId} level={level} />
+        </Suspense>
       </React.StrictMode>,
     );
   }
